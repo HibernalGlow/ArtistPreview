@@ -9,3 +9,7 @@ wheels/
 # Virtual environments
 .venv
 *.log
+to_be_classified.txt
+/scripts/artist_preview.html
+/scripts/classified_result.yaml
+/scripts/artist_cache.json
