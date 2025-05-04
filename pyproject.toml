@@ -27,7 +27,7 @@ dependencies = [
 "Bug Tracker" = "https://github.com/yourusername/ArtistPreview/issues"
 
 [project.scripts]
-artist-preview = "src.artist_preview:main"
+artist-preview = "artist_preview:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

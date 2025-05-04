@@ -9,6 +9,6 @@ ArtistPreview - 漫画/插图作品按画师分类工具
 
 __version__ = "0.1.0"
 
-from .main import ArtistPreviewController, main
+from .__main__ import ArtistPreviewController, main
 
-__all__ = ["ArtistPreviewController", "main"]
+__all__ = ["ArtistPreviewController", "__main__"]
