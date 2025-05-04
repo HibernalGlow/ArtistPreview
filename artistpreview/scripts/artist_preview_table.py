@@ -16,7 +16,7 @@ import json
 from nodes.record.logger_config import setup_logger
 
 config = {
-    'script_name': 'artist_preview_table',
+    'script_name': 'artistpreview_table',
     'console_enabled': True
 }
 logger, config_info = setup_logger(config)
@@ -1020,7 +1020,7 @@ class ArtistPreviewGenerator:
 async def generate_preview_tables(yaml_path: str, output_path: str = None):
     """生成画师预览表格的主函数"""
     if output_path is None:
-        output_path = Path(yaml_path).parent / 'artist_preview.html'
+        output_path = Path(yaml_path).parent / 'artistpreview.html'
     
     generator = ArtistPreviewGenerator()
     async with generator:
@@ -1068,7 +1068,7 @@ if __name__ == "__main__":
         sys.exit(1)
     
     # 设置输出路径
-    output_path = Path(yaml_path).parent / 'artist_preview.html'
+    output_path = Path(yaml_path).parent / 'artistpreview.html'
     
     print(f"处理文件: {yaml_path}")
     print(f"输出文件: {output_path}")

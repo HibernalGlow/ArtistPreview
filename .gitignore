@@ -10,6 +10,6 @@ wheels/
 .venv
 *.log
 to_be_classified.txt
-/scripts/artist_preview.html
+/scripts/artistpreview.html
 /scripts/classified_result.yaml
 /scripts/artist_cache.json
