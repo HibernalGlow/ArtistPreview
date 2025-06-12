@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-ArtistPreview - 漫画/插图作品按画师分类工具的主入口脚本
+previewa - 漫画/插图作品按画师分类工具的主入口脚本
 """
-from artistpreview.__main__ import main
+from previewa.__main__ import main
 if __name__ == "__main__":
     main()

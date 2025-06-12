@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "artistpreview"
+name = "previewa"
 version = "0.1.0"
 description = "漫画/插图作品按画师分类工具"
 readme = "README.md"
@@ -29,16 +29,16 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/yourusername/ArtistPreview"
-"Bug Tracker" = "https://github.com/yourusername/ArtistPreview/issues"
+"Homepage" = "https://github.com/yourusername/previewa"
+"Bug Tracker" = "https://github.com/yourusername/previewa/issues"
 
 [project.scripts]
-artistpreview = "artistpreview.__main__:main"
+previewa = "previewa.__main__:main"
 
 [tool.setuptools]
-package-dir = {"" = "artistpreview"}
-
+package-dir = {"" = "src"}
+packages = ["previewa"]
 [tool.setuptools.packages.find]
-where = ["artistpreview"]
+where = ["previewa"]
 include = ["*"]
 exclude = ["*.tests", "*.tests.*", "tests.*", "tests"]
