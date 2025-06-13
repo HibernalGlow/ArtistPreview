@@ -26,6 +26,7 @@ dependencies = [
     "requests>=2.25.0",
     "aiohttp>=3.8.0",
     "textual>=0.22.0",
+    "opencc>=1.1.9",
 ]
 
 [project.urls]
@@ -34,11 +35,12 @@ dependencies = [
 
 [project.scripts]
 previewa = "previewa.__main__:main"
-
+samea = "samea.__main__:main"
+lista = "lista.__main__:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["previewa"]
+
 [tool.setuptools.packages.find]
-where = ["previewa"]
-include = ["*"]
+where = ["src"]
+include = ["previewa*"]
 exclude = ["*.tests", "*.tests.*", "tests.*", "tests"]

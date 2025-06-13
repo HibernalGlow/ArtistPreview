@@ -166,10 +166,10 @@ class ArtistPreviewController:
 # 用作命令行入口的函数
 def main():
     """命令行入口函数"""
-    from .ui.cli import parse_args, setup_logging
+    from .ui.cli import parse_args
     
     args = parse_args()
-    setup_logging(args.verbose)
+    # setup_logging(args.verbose)
     
     # 初始化控制器
     controller = ArtistPreviewController(args.cache_file)
@@ -218,3 +218,7 @@ def main():
     )
     
     return 0 if result.get("status") != "error" else 1
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
