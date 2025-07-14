@@ -13,7 +13,6 @@ import sys
 import json
 
 # from textual_logger import TextualLoggerManager
-from textual_preset import create_config_app
 from loguru import logger
 import os
 import sys
