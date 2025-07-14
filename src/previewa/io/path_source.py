@@ -113,11 +113,13 @@ class PathSource:
             valid_paths = []
             for path in paths:
                 path = path.strip('"').strip("'")
-                if os.path.exists(path):
+                # 支持 http/https/ftp 等 URL 路径
+                if path.startswith(('http://', 'https://', 'ftp://')):
+                    valid_paths.append(path)
+                elif os.path.exists(path):
                     valid_paths.append(path)
                 else:
                     logger.warning(f"路径不存在: {path}")
-            
             return valid_paths
         except Exception as e:
             logger.error(f"读取文件时出错: {e}")

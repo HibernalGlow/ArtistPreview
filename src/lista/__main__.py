@@ -1,14 +1,24 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+画师信息维护工具
+
+这个工具专门用于维护和管理画师数据库，包括：
+- 自动扫描并更新画师文件夹列表
+- 添加、删除用户自定义画师
+- 搜索和列出画师信息
+- 显示画师统计信息
+
+作者: Lista
+创建时间: 2025年7月14日
+"""
+
 import os
-import re
-import shutil
+import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-from venv import logger
-import yaml
+from typing import Dict
 from loguru import logger
-import os
 import sys
-from pathlib import Path
 from datetime import datetime
 
 def setup_logger(app_name="app", project_root=None, console_output=True):
@@ -59,7 +69,7 @@ def setup_logger(app_name="app", project_root=None, console_output=True):
         compression="zip",
         encoding="utf-8",
         format="{time:YYYY-MM-DD HH:mm:ss} | {elapsed} | {level.icon} {level: <8} | {name}:{function}:{line} - {message}",
-    )
+        enqueue=True,     )
     
     # 创建配置信息字典
     config_info = {
@@ -72,58 +82,166 @@ def setup_logger(app_name="app", project_root=None, console_output=True):
 logger, config_info = setup_logger(app_name="lista", console_output=True)
 
 
-class ArtistClassifier:
-    def __init__(self, config_path: str = None):
+class ArtistInfoManager:
+    """画师信息管理器 - 负责维护和管理画师数据库"""
+    
+    def __init__(self, config_path: str = None, artists_path: str = None):
         # 如果没有指定配置文件路径，则使用同目录下的默认配置文件
         if config_path is None:
-            config_path = Path(__file__).parent / "lista.yaml"
+            config_path = Path(__file__).parent / "config.json"
+        if artists_path is None:
+            artists_path = Path(__file__).parent / "artists.json"
         
-        logger.info(f"初始化画师分类器，配置文件路径: {config_path}")
-        self.config = self._load_config(config_path)
+        logger.info(f"初始化画师信息管理器，配置文件路径: {config_path}")
+        logger.info(f"画师数据文件路径: {artists_path}")
+        
+        self.config_path = config_path
+        self.artists_path = artists_path
+        
+        self.config = self._load_json_config(config_path)
+        self.artists_data = self._load_json_config(artists_path)
+        
+        # 初始化默认配置结构（如果配置文件为空或不存在）
+        if not self.config:
+            logger.info("配置文件不存在或为空，使用默认配置")
+            self.config = self._create_default_config()
+            self._save_json_config(self.config, self.config_path)
+        
+        # 初始化默认画师数据结构（如果画师文件为空或不存在）
+        if not self.artists_data:
+            logger.info("画师数据文件不存在或为空，创建初始结构")
+            self.artists_data = self._create_default_artists_data()
+            self._save_artists_data()
+        
+        # 确保必要的数据结构存在
+        if 'auto_detected' not in self.artists_data:
+            self.artists_data['auto_detected'] = {}
+        if 'user_defined' not in self.artists_data:
+            self.artists_data['user_defined'] = {}
+        if 'metadata' not in self.artists_data:
+            self.artists_data['metadata'] = {
+                'version': '1.0.0',
+                'created_time': datetime.now().isoformat(),
+                'last_updated': datetime.now().isoformat(),
+                'auto_detected_count': 0,
+                'user_defined_count': 0,
+                'total_artists': 0
+            }
+        
         self.base_dir = Path(self.config['paths']['base_dir'])
         logger.info(f"基础目录: {self.base_dir}")
         
-        # 确保基础目录存在
+        # 检查基础目录是否存在
         if not self.base_dir.exists():
-            logger.error(f"基础目录不存在: {self.base_dir}")
-            raise ValueError(f"基础目录不存在: {self.base_dir}")
+            logger.warning(f"基础目录不存在: {self.base_dir}")
+            logger.info("如果这是第一次运行，请确保配置文件中的基础目录路径正确")
+            logger.info("或者手动创建该目录后再次运行程序")
+            # 不直接抛出异常，而是继续运行，但跳过更新画师列表
+            self._should_update_artists = False
+        else:
+            self._should_update_artists = True
         
-        self.found_artists_dir = Path(self.config['paths']['found_artists_dir'])
-        self.intermediate_mode = False
-        self.create_artist_folders = False  # 新增：是否创建画师文件夹的标志
-        
-        
-        # 初始化时更新画师列表
-        logger.info("开始初始化画师列表...")
-        self.update_artist_list()
-        
-        # 打印当前的画师列表
-        all_artists = {**self.config['artists']['auto_detected'], 
-                      **self.config['artists']['user_defined']}
-        logger.info(f"当前共有 {len(all_artists)} 个画师:")
-        for name, folder in all_artists.items():
-            logger.debug(f"  - {name} -> {folder}")
+        # 只有在基础目录存在时才初始化更新画师列表
+        if self._should_update_artists:
+            logger.info("开始初始化画师列表...")
+            self.update_artist_list()
+            
+            # 打印当前的画师列表
+            all_artists = {**self.artists_data['auto_detected'], 
+                          **self.artists_data['user_defined']}
+            logger.info(f"当前共有 {len(all_artists)} 个画师:")
+            for name, folder in all_artists.items():
+                logger.debug(f"  - {name} -> {folder}")
+        else:
+            logger.warning("跳过画师列表初始化，因为基础目录不存在")
 
-    def set_pending_dir(self, path: str):
-        """设置待处理文件夹路径"""
-        self.pending_dir = Path(path)
-        if not self.pending_dir.exists():
-            raise ValueError(f"路径不存在: {path}")
+    def _load_json_config(self, config_path: str) -> dict:
+        """加载 JSON 配置文件"""
+        if not os.path.exists(config_path):
+            logger.warning(f"配置文件不存在: {config_path}")
+            return {}
+        
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON 文件格式错误: {config_path} - {str(e)}")
+            return {}
+        except Exception as e:
+            logger.error(f"读取配置文件失败: {config_path} - {str(e)}")
+            return {}
 
-    def _load_config(self, config_path: str) -> dict:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
+    def _create_default_config(self) -> dict:
+        """创建默认配置"""
+        return {
+            "paths": {
+                "base_dir": "E:\\1EHV",
+                "found_artists_dir": "E:\\1EHV\\[01已找到画师]"
+            },
+            "categories": {
+                "CG": ["CG", "cg"],
+                "漫画": ["漫画", "manga", "comic"],
+                "插画": ["插画", "illust", "illustration"],
+                "同人": ["同人", "doujin"],
+                "原创": ["原创", "original"]
+            },
+            "exclude_keywords": [
+                "汉化", "翻译", "Chinese", "中文", "简体", "繁体",
+                "DL版", "无修正", "有修正", "高画质", "高清",
+                ".zip", ".rar", ".7z"
+            ]
+        }
+    
+    def _create_default_artists_data(self) -> dict:
+        """创建默认画师数据结构"""
+        return {
+            "metadata": {
+                "version": "1.0.0",
+                "created_time": datetime.now().isoformat(),
+                "last_updated": datetime.now().isoformat(),
+                "auto_detected_count": 0,
+                "user_defined_count": 0,
+                "total_artists": 0,
+                "description": "画师数据库 - 自动生成"
+            },
+            "auto_detected": {},
+            "user_defined": {}
+        }
 
-    def _save_config(self, config_path: str):
+    def _save_json_config(self, data: dict, config_path: str):
+        """保存 JSON 配置文件"""
+        # 更新时间戳
+        if 'metadata' in data:
+            data['metadata']['last_updated'] = datetime.now().isoformat()
+        elif 'last_updated' in data:
+            data['last_updated'] = datetime.now().isoformat()
+            
         with open(config_path, 'w', encoding='utf-8') as f:
-            yaml.dump(self.config, f, allow_unicode=True)
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def _save_artists_data(self):
+        """保存画师数据到 JSON 文件"""
+        # 更新统计信息
+        self.artists_data['metadata']['auto_detected_count'] = len(self.artists_data['auto_detected'])
+        self.artists_data['metadata']['user_defined_count'] = len(self.artists_data['user_defined'])
+        self.artists_data['metadata']['total_artists'] = (
+            self.artists_data['metadata']['auto_detected_count'] + 
+            self.artists_data['metadata']['user_defined_count']
+        )
+        
+        self._save_json_config(self.artists_data, self.artists_path)
 
     def update_artist_list(self):
         """更新画师列表"""
         logger.info("开始更新画师列表...")
         
-        base_dir = Path(r'E:\1EHV')
-        # logger.debug(f"扫描目录: {base_dir}")
+        base_dir = Path(self.config['paths']['base_dir'])
+        
+        # 检查基础目录是否存在
+        if not base_dir.exists():
+            logger.error(f"基础目录不存在: {base_dir}")
+            logger.info("请检查配置文件中的基础目录路径是否正确")
+            return False
         
         try:
             # 获取所有画师文件夹
@@ -133,24 +251,22 @@ class ArtistClassifier:
             
             logger.info(f"找到 {len(folders)} 个画师文件夹")
             
-            # 确保配置中有必要的结构
-            if 'artists' not in self.config:
-                self.config['artists'] = {}
-            if 'auto_detected' not in self.config['artists']:
-                self.config['artists']['auto_detected'] = {}
-            if 'user_defined' not in self.config['artists']:
-                self.config['artists']['user_defined'] = {}
+            # 确保画师数据结构存在
+            if 'auto_detected' not in self.artists_data:
+                self.artists_data['auto_detected'] = {}
+            if 'user_defined' not in self.artists_data:
+                self.artists_data['user_defined'] = {}
             
             # 清理不存在的文件夹
-            for folder in list(self.config['artists']['auto_detected'].keys()):
+            for folder in list(self.artists_data['auto_detected'].keys()):
                 if folder not in folders:
                     logger.warning(f"移除不存在的文件夹: {folder}")
-                    del self.config['artists']['auto_detected'][folder]
+                    del self.artists_data['auto_detected'][folder]
             
             # 更新每个文件夹的画师名称数组
             for folder_name in folders:
                 # 如果在用户自定义中已存在，则跳过
-                if any(folder_name == v for v in self.config['artists']['user_defined'].values()):
+                if any(folder_name == v for v in self.artists_data['user_defined'].values()):
                     logger.debug(f"跳过用户自定义的文件夹: {folder_name}")
                     continue
                 
@@ -181,444 +297,181 @@ class ArtistClassifier:
                              if name and not any(k in name for k in self.config['exclude_keywords'])]
                 
                 if valid_names:
-                    if folder_name in self.config['artists']['auto_detected']:
+                    if folder_name in self.artists_data['auto_detected']:
                         logger.info(f"更新画师名称: {folder_name} -> {valid_names}")
                     else:
                         logger.info(f"添加新画师: {folder_name} -> {valid_names}")
-                    self.config['artists']['auto_detected'][folder_name] = valid_names
+                    self.artists_data['auto_detected'][folder_name] = valid_names
             
-            # 保存更新后的配置
-            self._save_config("画师分类.yaml")
+            # 保存更新后的画师数据
+            self._save_artists_data()
             
-            total_artists = len(self.config['artists']['auto_detected']) + len(self.config['artists']['user_defined'])
+            total_artists = len(self.artists_data['auto_detected']) + len(self.artists_data['user_defined'])
             logger.info(f"画师列表更新完成，共 {total_artists} 个画师")
-            logger.debug(f"自动检测: {len(self.config['artists']['auto_detected'])} 个")
-            logger.debug(f"用户自定义: {len(self.config['artists']['user_defined'])} 个")
+            logger.debug(f"自动检测: {len(self.artists_data['auto_detected'])} 个")
+            logger.debug(f"用户自定义: {len(self.artists_data['user_defined'])} 个")
+            return True
             
         except Exception as e:
             logger.error(f"扫描目录出错: {str(e)}")
-            raise
+            return False
 
-    def _detect_category(self, file_path: str) -> str:
-        """根据文件路径检测作品类别"""
-        path_str = str(file_path).lower()
-        for category, keywords in self.config['categories'].items():
-            # 检查完整路径中是否包含关键词
-            if any(keyword.lower() in path_str for keyword in keywords):
-                return category
-        return "一般"
-
-    def _find_artist_info(self, filename: str) -> Optional[Tuple[str, str, bool]]:
+    def add_user_defined_artist(self, artist_names: str, folder_name: str):
         """
-        查找画师信息的公共函数
+        添加用户自定义画师
         
         Args:
-            filename: 文件名
-            
-        Returns:
-            Optional[Tuple[str, str, bool]]: (画师名, 文件夹名, 是否为已存在画师)
-            如果未找到则返回None
+            artist_names: 画师名称（多个名称用空格分隔）
+            folder_name: 对应的文件夹名称
         """
-        # 从文件名中提取画师名称
-        name_str = filename
-        for keyword in self.config['exclude_keywords']:
-            name_str = name_str.replace(keyword, "")
+        if artist_names in self.artists_data['user_defined']:
+            logger.warning(f"画师已存在: {artist_names}")
+            return False
         
-        # 提取方括号中的内容
-        pattern = r'\[([^\[\]]+)\]'
-        matches = re.finditer(pattern, name_str)
-        artist_names = []
-        
-        for match in matches:
-            content = match.group(1).strip()
-            if '(' in content:
-                # 处理带括号的情况
-                circle_part = content.split('(')[0].strip()
-                artist_part = content.split('(')[1].rstrip(')').strip()
-                
-                # 先添加画师名
-                artist_names.extend([n.strip() for n in artist_part.split('、')])
-                # 再添加社团名
-                artist_names.extend([n.strip() for n in circle_part.split('、')])
-            else:
-                # 没有括号的情况
-                artist_names.append(content)
-        
-        logger.debug(f"从文件名提取的画师名称: {artist_names}")
-        
-        # 先检查用户自定义的画师
-        for artist_name in artist_names:
-            if artist_name and not any(k in artist_name for k in self.config['exclude_keywords']):
-                for names, folder in self.config['artists']['user_defined'].items():
-                    if artist_name in names.split():
-                        logger.info(f"找到用户自定义画师: {artist_name} ({names}) -> {folder}")
-                        return artist_name, folder, True
-        
-        # 如果用户自定义中没找到，再检查自动检测的画师
-        for artist_name in artist_names:
-            if artist_name and not any(k in artist_name for k in self.config['exclude_keywords']):
-                for folder, names in self.config['artists']['auto_detected'].items():
-                    if artist_name in names:
-                        logger.info(f"找到自动检测画师: {artist_name} -> {folder}")
-                        return artist_name, folder, True
-        
-        # 如果都没找到，但有有效的画师名，返回第一个画师名作为新画师
-        for artist_name in artist_names:
-            if artist_name and not any(k in artist_name for k in self.config['exclude_keywords']):
-                folder_name = f"[{artist_name}]"
-                return artist_name, folder_name, False
-        
-        logger.debug(f"未找到匹配画师，文件名: {filename}")
-        return None
-
-    def _find_artist_folder(self, filename: str) -> Optional[Tuple[str, str]]:
-        """查找匹配的画师文件夹（为了保持向后兼容）"""
-        result = self._find_artist_info(filename)
-        if result:
-            artist_name, folder_name, _ = result
-            return artist_name, folder_name
-        return None
-
-    def move_file(self, source_path: Path, target_folder: Path):
-        """移动文件到目标文件夹"""
-        # 根据源文件的完整路径检测类别
-        category = self._detect_category(source_path)
-        
-        # 确定目标路径
-        if category == "一般":
-            # 如果没有匹配到类别，直接放在画师文件夹下
-            target_path = target_folder / source_path.name
-        else:
-            # 检查画师文件夹下是否存在对应类别的子文件夹
-            possible_folders = []
-            for folder in target_folder.iterdir():
-                if folder.is_dir():
-                    # 检查文件夹名是否包含类别关键词
-                    for keyword in self.config['categories'].get(category, []):
-                        if keyword.lower() in folder.name.lower():
-                            possible_folders.append(folder)
-                            break
+        # 检查文件夹是否真实存在
+        if not self.base_dir.exists():
+            logger.error(f"基础目录不存在: {self.base_dir}")
+            return False
             
-            if possible_folders:
-                # 如果找到匹配的文件夹，使用第一个匹配的文件夹
-                target_path = possible_folders[0] / source_path.name
-                logger.info(f'找到匹配的子文件夹: "{possible_folders[0].name}"')
-            else:
-                # 如果没有找到匹配的文件夹，放在根目录
-                target_path = target_folder / source_path.name
-                logger.info(f'未找到匹配的子文件夹，放在根目录')
+        folder_path = self.base_dir / folder_name
+        if not folder_path.exists():
+            logger.error(f"文件夹不存在: {folder_path}")
+            return False
         
-        # 处理文件名冲突
-        if target_path.exists():
-            new_name = f"🆕{source_path.name}"
-            target_path = target_path.parent / new_name
-            logger.info(f'文件已存在，更名为 "{new_name}"')
+        self.artists_data['user_defined'][artist_names] = folder_name
+        self._save_artists_data()
+        logger.info(f"已添加用户自定义画师: {artist_names} -> {folder_name}")
+        return True
+    
+    def remove_user_defined_artist(self, artist_names: str):
+        """
+        删除用户自定义画师
         
-        # 移动文件
-        shutil.move(str(source_path), str(target_path))
-        # 保留时间戳
-        original_stat = os.stat(target_path)
-        os.utime(target_path, (original_stat.st_atime, original_stat.st_mtime))
+        Args:
+            artist_names: 要删除的画师名称
+        """
+        if artist_names not in self.artists_data['user_defined']:
+            logger.warning(f"画师不存在: {artist_names}")
+            return False
         
-        # 记录日志
-        logger.info(f'已移动: "{source_path.name}" -> "{target_path.relative_to(target_folder)}"')
-
-    def process_files(self):
-        """处理待分类文件"""
-        supported_formats = {'.zip', '.rar', '.7z'}
+        folder_name = self.artists_data['user_defined'][artist_names]
+        del self.artists_data['user_defined'][artist_names]
+        self._save_artists_data()
+        logger.info(f"已删除用户自定义画师: {artist_names} -> {folder_name}")
+        return True
+    
+    def list_artists(self, artist_type: str = "all"):
+        """
+        列出画师信息
         
-        # 获取所有待处理文件
-        files = list(Path(self.pending_dir).rglob("*"))
-        target_files = [f for f in files if f.suffix.lower() in supported_formats]
+        Args:
+            artist_type: 画师类型 ("all", "auto", "user")
+        """
+        logger.info(f"列出画师信息 (类型: {artist_type}):")
         
-        logger.info(f"开始处理 {len(target_files)} 个文件...")
+        if artist_type in ["all", "auto"]:
+            logger.info(f"自动检测画师 ({len(self.artists_data['auto_detected'])} 个):")
+            for folder, names in self.artists_data['auto_detected'].items():
+                logger.info(f"  {folder} -> {names}")
         
-        if self.intermediate_mode:
-            # 中间模式：使用文本模式的识别算法
-            # 创建临时的文本文件
-            temp_txt = Path(self.pending_dir) / "temp_to_be_classified.txt"
-            with open(temp_txt, 'w', encoding='utf-8') as f:
-                for file_path in target_files:
-                    f.write(f"{file_path.name}\n")
-            
-            # 使用文本模式处理
-            result = self.process_to_be_classified(str(temp_txt))
-            
-            # 在输入路径下创建转移文件夹
-            found_dir = Path(self.pending_dir) / "[01已找到画师]"
-            found_dir.mkdir(exist_ok=True)
-            
-            # 移动文件
-            moved_files = []
-            
-            # 处理已存在的画师
-            for folder_name, files_list in result['artists']['existing_artists'].items():
-                # 检查画师文件夹是否存在
-                artist_folder = self.base_dir / folder_name
-                if not artist_folder.exists():
-                    logger.warning(f"画师文件夹不存在，跳过移动: {folder_name}")
-                    continue
-
-                # 如果启用了创建画师文件夹选项，创建对应的文件夹
-                target_dir = found_dir
-                if self.create_artist_folders:
-                    artist_folder_in_found = found_dir / folder_name
-                    artist_folder_in_found.mkdir(exist_ok=True)
-                    target_dir = artist_folder_in_found
-                    self.copy_folder_structure(artist_folder, artist_folder_in_found)
-                for file_name in files_list:
-                    source_path = Path(self.pending_dir) / file_name
-                    if source_path.exists():
-                        target_path = target_dir / file_name
-                        shutil.move(str(source_path), str(target_path))
-                        moved_files.append((file_name, folder_name))
-                        if self.create_artist_folders:
-                            logger.info(f"已移动到已存在画师文件夹: {file_name} -> {folder_name}")
-                        else:
-                            logger.info(f"已移动到中间文件夹: {file_name} -> {folder_name}")
-            
-            # 处理新画师（不创建文件夹，也不移动到中间文件夹）
-            for folder_name, files_list in result['artists']['new_artists'].items():
-                for file_name in files_list:
-                    logger.info(f"未找到画师文件夹，跳过移动: {file_name} -> {folder_name}")
-            
-            # 删除临时文件
-            temp_txt.unlink()
-            
-            # 显示汇总信息
-            if moved_files:
-                logger.info("已找到的文件汇总:")
-                for file_name, folder in moved_files:
-                    logger.info(f"  - {file_name} -> {folder}")
-            
-            # 保存分类结果
-            output_yaml = Path(self.pending_dir) / "classified_result.yaml"
-            self.save_classification_result(result, str(output_yaml))
-            
-        else:
-            # 直接模式：移动到画师文件夹
-            for i, file_path in enumerate(target_files, 1):
-                logger.info(f"正在检查: {file_path.name} ({i}/{len(target_files)})")
-                
-                artist_info = self._find_artist_folder(file_path.name)
-                if artist_info:
-                    artist_name, folder_name = artist_info
-                    target_folder = self.base_dir / folder_name
-                    try:
-                        self.move_file(file_path, target_folder)
-                        logger.info(f"已移动到画师文件夹: {file_path.name} -> {folder_name}")
-                    except Exception as e:
-                        logger.error(f"移动文件失败: {file_path.name} - {str(e)}")
+        if artist_type in ["all", "user"]:
+            logger.info(f"用户自定义画师 ({len(self.artists_data['user_defined'])} 个):")
+            for names, folder in self.artists_data['user_defined'].items():
+                logger.info(f"  {names} -> {folder}")
+    
+    def search_artist(self, keyword: str):
+        """
+        搜索画师
+        
+        Args:
+            keyword: 搜索关键词
+        """
+        logger.info(f"搜索画师: {keyword}")
+        found_artists = []
+        
+        # 搜索自动检测的画师
+        for folder, names in self.artists_data['auto_detected'].items():
+            if keyword.lower() in folder.lower() or any(keyword.lower() in name.lower() for name in names):
+                found_artists.append(("auto", folder, names))
+        
+        # 搜索用户自定义的画师
+        for names, folder in self.artists_data['user_defined'].items():
+            if keyword.lower() in names.lower() or keyword.lower() in folder.lower():
+                found_artists.append(("user", names, folder))
+        
+        if found_artists:
+            logger.info(f"找到 {len(found_artists)} 个匹配的画师:")
+            for artist_type, key, value in found_artists:
+                if artist_type == "auto":
+                    logger.info(f"  [自动] {key} -> {value}")
                 else:
-                    logger.warning(f"未找到匹配画师: {file_path.name}")
-
-    def extract_artist_info_from_filename(self, filename: str) -> Dict[str, List[str]]:
-        """从文件名中提取画师信息"""
-        result = {
-            'artists': [],
-            'circles': [],
-            'raw_name': filename
-        }
+                    logger.info(f"  [用户] {key} -> {value}")
+        else:
+            logger.info("未找到匹配的画师")
         
-        # 清理文件名
-        name_str = filename
-        for keyword in self.config['exclude_keywords']:
-            name_str = name_str.replace(keyword, "")
-        
-        # 提取方括号中的内容
-        pattern = r'\[([^\[\]]+)\]'
-        matches = re.finditer(pattern, name_str)
-        
-        for match in matches:
-            content = match.group(1).strip()
-            if '(' in content:
-                # 处理带括号的情况 - 社团(画师)格式
-                circle_part = content.split('(')[0].strip()
-                artist_part = content.split('(')[1].rstrip(')').strip()
-                
-                # 处理画师名（按顿号分割）
-                artist_names = [n.strip() for n in artist_part.split('、')]
-                result['artists'].extend(artist_names)
-                
-                # 处理社团名（按顿号分割）
-                circle_names = [n.strip() for n in circle_part.split('、')]
-                result['circles'].extend(circle_names)
-            else:
-                # 没有括号的情况，假定为画师名
-                result['artists'].append(content)
-        
-        # 过滤无效名称
-        result['artists'] = [name for name in result['artists'] 
-                           if name and not any(k in name for k in self.config['exclude_keywords'])]
-        result['circles'] = [name for name in result['circles'] 
-                           if name and not any(k in name for k in self.config['exclude_keywords'])]
-        
-        return result
-
-    def process_to_be_classified(self, txt_path: str) -> Dict:
-        """处理待分类的txt文件，生成分类结构"""
-        logger.info(f"开始处理待分类文件: {txt_path}")
-        
-        if not os.path.exists(txt_path):
-            raise FileNotFoundError(f"文件不存在: {txt_path}")
-        
-        # 读取txt文件
-        with open(txt_path, 'r', encoding='utf-8') as f:
-            filenames = [line.strip() for line in f if line.strip()]
-        
-        logger.info(f"读取到 {len(filenames)} 个文件名")
-        
-        # 初始化结果结构
-        result = {
-            'artists': {
-                'existing_artists': {},  # 已存在的画师
-                'new_artists': {},       # 新画师
-                'user_defined': {}
-            },
-            'unclassified': [],
-            'statistics': {
-                'total_files': len(filenames),
-                'classified_files': 0,
-                'unclassified_files': 0,
-                'existing_artists_count': 0,
-                'new_artists_count': 0
-            }
-        }
-        
-        # 处理每个文件名
-        for filename in filenames:
-            artist_info = self._find_artist_info(filename)
-            
-            if artist_info:
-                artist_name, folder_name, is_existing = artist_info
-                # 根据是否为已存在画师选择目标字典
-                target_dict = result['artists']['existing_artists'] if is_existing else result['artists']['new_artists']
-                
-                # 将文件名添加到对应的画师/社团文件夹下
-                if folder_name not in target_dict:
-                    target_dict[folder_name] = []
-                target_dict[folder_name].append(filename)
-                result['statistics']['classified_files'] += 1
-            else:
-                # 未能分类的文件
-                result['unclassified'].append(filename)
-                result['statistics']['unclassified_files'] += 1
-        
-        # 更新统计信息
-        result['statistics']['existing_artists_count'] = len(result['artists']['existing_artists'])
-        result['statistics']['new_artists_count'] = len(result['artists']['new_artists'])
-        
-        logger.info(f"分类完成: ")
-        logger.info(f"- 总文件数: {result['statistics']['total_files']}")
-        logger.info(f"- 已分类: {result['statistics']['classified_files']}")
-        logger.info(f"- 未分类: {result['statistics']['unclassified_files']}")
-        logger.info(f"- 已存在画师数: {result['statistics']['existing_artists_count']}")
-        logger.info(f"- 新画师数: {result['statistics']['new_artists_count']}")
-        
-        return result
-
-    def save_classification_result(self, result: Dict, output_path: str):
-        """保存分类结果到yaml文件"""
-        # 准备输出数据
-        output_data = {
-            'paths': self.config['paths'],
-            'categories': self.config['categories'],
-            'exclude_keywords': self.config['exclude_keywords'],
-            'artists': result['artists']
-        }
-        
-        # 添加未分类文件信息
-        if result['unclassified']:
-            output_data['unclassified'] = result['unclassified']
-        
-        # 添加统计信息
-        output_data['statistics'] = result['statistics']
-        
-        # 保存到yaml文件
-        with open(output_path, 'w', encoding='utf-8') as f:
-            yaml.dump(output_data, f, allow_unicode=True, sort_keys=False)
-        
-        logger.info(f"分类结果已保存到: {output_path}")
-        # ...existing code...
-
-    def copy_folder_structure(self, source_folder: Path, target_folder: Path):
-        """
-        复制源文件夹的一级子文件夹结构到目标文件夹
-        
-        Args:
-            source_folder: 源文件夹路径
-            target_folder: 目标文件夹路径
-        """
-        if not source_folder.exists() or not source_folder.is_dir():
-            logger.warning(f"源文件夹不存在或不是文件夹: {source_folder}")
-            return
-        
-        logger.info(f"正在复制文件夹结构: {source_folder} -> {target_folder}")
-        
-        # 确保目标文件夹存在
-        target_folder.mkdir(exist_ok=True)
-        
-        # 只复制一级子文件夹
-        subfolder_count = 0
-        for item in source_folder.iterdir():
-            if item.is_dir():
-                new_folder = target_folder / item.name
-                if not new_folder.exists():
-                    new_folder.mkdir(exist_ok=True)
-                    subfolder_count += 1
-                    logger.debug(f"创建子文件夹: {new_folder.name}")
-        
-        logger.info(f"已复制 {subfolder_count} 个子文件夹结构")
+        return found_artists
 
 
 def main():
-    """主函数 - 画师分类工具的命令行入口"""
+    """主函数 - 画师信息维护工具的命令行入口"""
     import argparse
     
-    parser = argparse.ArgumentParser(description="画师分类工具 - 自动分类漫画/插图作品")
+    parser = argparse.ArgumentParser(description="画师信息维护工具 - 管理和维护画师数据库")
     parser.add_argument("--config", "-c", help="配置文件路径", default=None)
-    parser.add_argument("--pending-dir", "-p", help="待处理文件夹路径", required=False)
-    parser.add_argument("--txt-file", "-t", help="待分类txt文件路径", required=False)
-    parser.add_argument("--intermediate", "-i", action="store_true", help="使用中间模式（移动到中间文件夹）")
-    parser.add_argument("--create-folders", "-f", action="store_true", help="在中间文件夹中创建画师文件夹结构")
+    parser.add_argument("--artists", "-a", help="画师数据文件路径", default=None)
     parser.add_argument("--update-list", "-u", action="store_true", help="更新画师列表")
+    parser.add_argument("--show-stats", "-s", action="store_true", help="显示画师统计信息")
+    parser.add_argument("--list-artists", "-l", choices=["all", "auto", "user"], help="列出画师信息")
+    parser.add_argument("--search", help="搜索画师（按关键词）")
+    parser.add_argument("--add-artist", nargs=2, metavar=("NAMES", "FOLDER"), help="添加用户自定义画师 (画师名 文件夹名)")
+    parser.add_argument("--remove-artist", help="删除用户自定义画师")
     
     args = parser.parse_args()
     
     try:
-        # 初始化分类器
-        classifier = ArtistClassifier(config_path=args.config)
+        # 初始化画师信息管理器
+        manager = ArtistInfoManager(config_path=args.config, artists_path=args.artists)
         
-        # 如果只是更新画师列表
         if args.update_list:
+            # 更新画师列表
             logger.info("正在更新画师列表...")
-            classifier.update_artist_list()
-            logger.info("画师列表更新完成！")
-            return
+            success = manager.update_artist_list()
+            if success:
+                logger.info("画师列表更新完成！")
+            else:
+                logger.error("画师列表更新失败！请检查基础目录配置")
         
-        # 设置中间模式和创建文件夹选项
-        classifier.intermediate_mode = args.intermediate
-        classifier.create_artist_folders = args.create_folders
+        if args.show_stats:
+            # 显示画师统计信息
+            all_artists = {**manager.artists_data['auto_detected'], 
+                          **manager.artists_data['user_defined']}
+            logger.info(f"画师统计信息:")
+            logger.info(f"- 自动检测画师: {len(manager.artists_data['auto_detected'])} 个")
+            logger.info(f"- 用户自定义画师: {len(manager.artists_data['user_defined'])} 个")
+            logger.info(f"- 总计: {len(all_artists)} 个画师")
         
-        if args.txt_file:
-            # 处理txt文件模式
-            logger.info(f"处理txt文件: {args.txt_file}")
-            result = classifier.process_to_be_classified(args.txt_file)
-            
-            # 保存结果
-            output_path = Path(args.txt_file).parent / "classified_result.yaml"
-            classifier.save_classification_result(result, str(output_path))
-            
-        elif args.pending_dir:
-            # 处理文件夹模式
-            logger.info(f"处理文件夹: {args.pending_dir}")
-            classifier.set_pending_dir(args.pending_dir)
-            classifier.process_files()
-            
-        else:
-            # 如果没有指定输入，显示帮助信息
+        if args.list_artists:
+            # 列出画师信息
+            manager.list_artists(args.list_artists)
+        
+        if args.search:
+            # 搜索画师
+            manager.search_artist(args.search)
+        
+        if args.add_artist:
+            # 添加画师
+            artist_names, folder_name = args.add_artist
+            manager.add_user_defined_artist(artist_names, folder_name)
+        
+        if args.remove_artist:
+            # 删除画师
+            manager.remove_user_defined_artist(args.remove_artist)
+        
+        if not any([args.update_list, args.show_stats, args.list_artists, 
+                   args.search, args.add_artist, args.remove_artist]):
+            # 如果没有指定任何操作，显示帮助信息
             parser.print_help()
-            logger.info("请指定待处理的文件夹路径(-p)或txt文件路径(-t)")
+            logger.info("请指定要执行的操作")
             
     except Exception as e:
         logger.error(f"程序执行出错: {str(e)}")

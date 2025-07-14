@@ -55,7 +55,7 @@ def setup_logger(app_name="streamlit_app", project_root=None, console_output=Tru
         compression="zip",
         encoding="utf-8",
         format="{time:YYYY-MM-DD HH:mm:ss} | {elapsed} | {level.icon} {level: <8} | {name}:{function}:{line} - {message}",
-    )
+        enqueue=True,     )
     
     return logger
 
