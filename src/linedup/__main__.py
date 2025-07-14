@@ -31,11 +31,12 @@ from collections import Counter
 
 console = Console()
 
-# 预制文件路径
-BASE_DIR = Path("D:/1VSCODE/GlowToolBox/src/nodes/refactor/lines_dedup_file")
-SOURCE_FILE = BASE_DIR / "source.txt"
-FILTER_FILE = BASE_DIR / "filter.txt" 
-OUTPUT_FILE = BASE_DIR / "output.txt"
+# 默认文件路径：包的 test 目录下
+PACKAGE_DIR = Path(__file__).parent
+TEST_DIR = PACKAGE_DIR / "test"
+SOURCE_FILE = TEST_DIR / "source.txt"
+FILTER_FILE = TEST_DIR / "filter.txt" 
+OUTPUT_FILE = TEST_DIR / "output.txt"
 
 def normalize_line(line: str) -> str:
     """
@@ -115,7 +116,7 @@ def filter_lines(lines_a: Set[str], lines_b: Set[str]) -> Set[str]:
 
 def main():
     # 确保目录存在
-    BASE_DIR.mkdir(parents=True, exist_ok=True)
+    TEST_DIR.mkdir(parents=True, exist_ok=True)
     # 检查必需文件是否存在
     if not SOURCE_FILE.exists():
         console.print(f"[bold red]错误：源文件不存在: {SOURCE_FILE}[/bold red]")

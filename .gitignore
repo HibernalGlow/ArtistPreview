@@ -18,3 +18,4 @@ lista.html
 *.html
 *.yaml
 *.json
+/src/linedup/test

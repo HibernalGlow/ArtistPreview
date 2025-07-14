@@ -37,6 +37,7 @@ dependencies = [
 previewa = "previewa.__main__:main"
 samea = "samea.__main__:main"
 lista = "lista.__main__:main"
+linedup = "linedup.__main__:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
