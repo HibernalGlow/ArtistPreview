@@ -2,9 +2,12 @@
 输出管理器模块
 负责结果输出和文件保存
 """
+
 import os
 from rich.console import Console
 from .config import ConfigManager
+import pyperclip
+import pyperclip
 
 console = Console()
 
@@ -38,11 +41,10 @@ class OutputManager:
         output_paths = []
         console.print(f"\n[bold {self.config.colors['success']}]重复文件夹路径列表：[/bold {self.config.colors['success']}]")
         
-        for i, folder in enumerate(similar_folders, 1):
+        for folder in similar_folders:
             if output_choice == "1":
                 # 输出原文件夹路径
                 out_path = folder["path"]
-                console.print(f"{i}. ", end="")
                 console.print(out_path, markup=False)
                 output_paths.append(out_path)
             else:
@@ -54,8 +56,6 @@ class OutputManager:
                     # 手动输入模式：需要组合 destination_path + target + name
                     target_subfolder = os.path.join(destination_path, folder["target"])
                     destination = os.path.join(target_subfolder, folder["name"])
-                
-                console.print(f"{i}. ", end="")
                 console.print(destination, markup=False)
                 output_paths.append(destination)
         
@@ -77,7 +77,9 @@ class OutputManager:
                 for path in output_paths:
                     f.write(path + "\n")
             
-            console.print(f"\n[{self.config.colors['success']}]路径已写入 {filename}，每行一个，便于复制。[/{self.config.colors['success']}]")
+            # 复制到剪贴板
+            pyperclip.copy("\n".join(output_paths))
+            console.print(f"\n[{self.config.colors['success']}]路径已写入 {filename}，已自动复制到剪贴板。[/{self.config.colors['success']}]")
             
         except Exception as e:
             console.print(f"[{self.config.colors['error']}]写入 {filename} 失败: {str(e)}[/{self.config.colors['error']}]")

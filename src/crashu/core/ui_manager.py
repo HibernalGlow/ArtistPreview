@@ -35,7 +35,7 @@ class UIManager:
         """
         return Confirm.ask(
             "是否自动获取目标文件夹（从指定目录下的一级子目录）？", 
-            default=False
+            default=True
         )
     
     def get_auto_dir(self) -> str:
