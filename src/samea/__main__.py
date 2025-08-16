@@ -86,70 +86,98 @@ logger, config_info = setup_logger(app_name="samea", console_output=True)
 cc_s2t = OpenCC('s2t')  # 简体到繁体
 cc_t2s = OpenCC('t2s')  # 繁体到简体
 
-# 黑名单关键词
-BLACKLIST_KEYWORDS = {
-    '已找到',
-    'unknown',  # 未知画师
-    # 画集/图集相关
-    'trash', '画集', '畫集', 'artbook', 'art book', 'art works', 'illustrations',
-    '图集', '圖集', 'illust', 'collection',
-    '杂图', '雜圖', '杂图合集', '雜圖合集',
-    # 其他不需要处理的类型
-    'pixiv', 'fanbox', 'gumroad', 'twitter',
-    '待分类', '待處理', '待分類',
-    '图包', '圖包',
-    '图片', '圖片',
-    'cg', 'CG',
-    r'v\d+',  # v2, v3 等版本号
-    # 常见标签
-    'R18', 'COMIC', 'VOL', '汉化', '漢化', '中国翻訳',
-    # 日期标记
-    r'\d{4}', r'\d{2}\.\d{2}',
-    # 其他通用标记
-    'DL版', 'Digital', '無修正',
-    # 翻译相关关键词
-    '中国翻译', '中国翻訳', '中国語', '中国语',
-    '中文', '中文翻译', '中文翻訳',
-    '日語', '日语', '翻訳', '翻译',
-    '汉化组', '漢化組', '汉化社', '漢化社',
-    '汉化', '漢化', '翻译版', '翻訳版',
-    '机翻', '機翻', '人工翻译', '人工翻訳',
-    '中国', '中國', '日本語', '日本语'
-    '汉化', '漢化',  # 汉化/漢化
-    '翻译', '翻訳', '翻譯', # 翻译相关
-    '中国翻译', '中国翻訳', '中国語','chinese','中文','中国', # 中文翻译
-    '嵌字',  # 嵌字
-    '掃圖', '掃', # 扫图相关
-    '制作', '製作', # 制作相关
-    '重嵌',  # 重新嵌入
-    '个人', # 个人翻译
-    '修正',  # 修正版本
-    '去码',
-    '日语社',
-    '制作',
-    '机翻',
-    '赞助',
-    '汉', '漢', # 汉字相关
-    '数位', '未来数位', '新视界', # 汉化相关
-    '出版', '青文出版', # 翻译相关
-    '脸肿', '无毒', '空気系', '夢之行蹤', '萌幻鴿鄉', '绅士仓库', 'Lolipoi', '靴下','CE家族社',
-    '不可视', '一匙咖啡豆', '无邪气', '洨五', '白杨', '瑞树',  # 常见汉化组名
-    '汉化组', '漢化組', '汉化社', '漢化社', 'CE 家族社', 'CE 家族社',  # 常见后缀
-    '个人汉化', '個人漢化'  # 个人汉化
-}
+def load_blacklist() -> Tuple[Set[str], List[str], Set[str]]:
+    """从JSON文件加载黑名单配置"""
+    blacklist_file = Path(__file__).parent / "blacklist.json"
+    try:
+        with open(blacklist_file, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        
+        artist_blacklist = set(config.get('artist_blacklist', []))
+        regex_patterns = config.get('regex_patterns', [])
+        path_blacklist = set(config.get('path_blacklist', []))
+        
+        logger.info(f"✅ 成功加载黑名单配置: 画师关键词 {len(artist_blacklist)} 个, 正则模式 {len(regex_patterns)} 个, 路径黑名单 {len(path_blacklist)} 个")
+        return artist_blacklist, regex_patterns, path_blacklist
+        
+    except Exception as e:
+        logger.warning(f"⚠️ 加载黑名单配置失败，使用默认配置: {e}")
+        # 返回默认配置
+        return {
+            '已找到', 'unknown', 'trash', '画集', '畫集', 'artbook', 'pixiv',
+            '汉化', '漢化', '翻译', '翻訳', '中文', '中国翻译'
+        }, ['v\\d+', '\\d{4}', '\\d{2}\\.\\d{2}'], {'[00画师分类]', 'trash', 'temp'}
 
-# 添加路径黑名单关键词
-PATH_BLACKLIST = {
-    '[00画师分类]',  # 已经分类的画师目录
-    '[00待分类]',    # 待分类目录
-    '[00去图]',      # 去图目录
-    '已找到',        # 杂项目录
-    '[02COS]',       # COS目录
-    'trash',         # 垃圾箱
-    'temp',          # 临时目录
-    '待处理',        # 待处理目录
-    # '新建文件夹'     # 临时文件夹
-}
+# 加载黑名单配置
+BLACKLIST_KEYWORDS, REGEX_PATTERNS, PATH_BLACKLIST = load_blacklist()
+
+def save_blacklist(artist_blacklist: Set[str], regex_patterns: List[str], path_blacklist: Set[str]) -> bool:
+    """保存黑名单配置到JSON文件"""
+    blacklist_file = Path(__file__).parent / "blacklist.json"
+    try:
+        config = {
+            "artist_blacklist": sorted(list(artist_blacklist)),
+            "regex_patterns": regex_patterns,
+            "path_blacklist": sorted(list(path_blacklist))
+        }
+        with open(blacklist_file, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        logger.info(f"✅ 黑名单配置已保存到: {blacklist_file}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ 保存黑名单配置失败: {e}")
+        return False
+
+def add_to_blacklist(keyword: str, blacklist_type: str = "artist") -> bool:
+    """添加关键词到黑名单"""
+    global BLACKLIST_KEYWORDS, REGEX_PATTERNS, PATH_BLACKLIST, _BLACKLIST_KEYWORDS_FULL
+    
+    keyword = keyword.strip()
+    if not keyword:
+        return False
+    
+    if blacklist_type == "artist":
+        BLACKLIST_KEYWORDS.add(keyword)
+        _BLACKLIST_KEYWORDS_FULL = preprocess_keywords(BLACKLIST_KEYWORDS)
+        logger.info(f"✅ 已添加画师黑名单关键词: {keyword}")
+    elif blacklist_type == "path":
+        PATH_BLACKLIST.add(keyword)
+        logger.info(f"✅ 已添加路径黑名单关键词: {keyword}")
+    elif blacklist_type == "regex":
+        REGEX_PATTERNS.append(keyword)
+        logger.info(f"✅ 已添加正则黑名单模式: {keyword}")
+    else:
+        return False
+    
+    return save_blacklist(BLACKLIST_KEYWORDS, REGEX_PATTERNS, PATH_BLACKLIST)
+
+def remove_from_blacklist(keyword: str, blacklist_type: str = "artist") -> bool:
+    """从黑名单中移除关键词"""
+    global BLACKLIST_KEYWORDS, REGEX_PATTERNS, PATH_BLACKLIST, _BLACKLIST_KEYWORDS_FULL
+    
+    keyword = keyword.strip()
+    if not keyword:
+        return False
+    
+    try:
+        if blacklist_type == "artist" and keyword in BLACKLIST_KEYWORDS:
+            BLACKLIST_KEYWORDS.remove(keyword)
+            _BLACKLIST_KEYWORDS_FULL = preprocess_keywords(BLACKLIST_KEYWORDS)
+            logger.info(f"✅ 已移除画师黑名单关键词: {keyword}")
+        elif blacklist_type == "path" and keyword in PATH_BLACKLIST:
+            PATH_BLACKLIST.remove(keyword)
+            logger.info(f"✅ 已移除路径黑名单关键词: {keyword}")
+        elif blacklist_type == "regex" and keyword in REGEX_PATTERNS:
+            REGEX_PATTERNS.remove(keyword)
+            logger.info(f"✅ 已移除正则黑名单模式: {keyword}")
+        else:
+            logger.warning(f"⚠️ 关键词不存在于黑名单中: {keyword}")
+            return False
+        
+        return save_blacklist(BLACKLIST_KEYWORDS, REGEX_PATTERNS, PATH_BLACKLIST)
+    except Exception as e:
+        logger.error(f"❌ 移除黑名单关键词失败: {e}")
+        return False
 
 def preprocess_keywords(keywords: Set[str]) -> Set[str]:
     """预处理关键词集合，添加繁简体变体"""
@@ -168,57 +196,117 @@ def preprocess_keywords(keywords: Set[str]) -> Set[str]:
 # 预处理黑名单关键词
 _BLACKLIST_KEYWORDS_FULL = preprocess_keywords(BLACKLIST_KEYWORDS)
 
+def is_artist_name_blacklisted(name: str) -> bool:
+    """检查画师名是否包含黑名单关键词"""
+    name_lower = name.lower().strip()
+    
+    # 跳过空字符串
+    if not name_lower:
+        return True
+        
+    # 跳过纯数字
+    if name_lower.isdigit():
+        return True
+        
+    # 检查正则模式
+    for pattern in REGEX_PATTERNS:
+        if re.match(pattern, name_lower):
+            return True
+        
+    # 跳过数字字母混合的短标记
+    if re.match(r'^[0-9a-zA-Z]{1,6}$', name_lower):
+        return True
+        
+    # 跳过黑名单关键词
+    if any(keyword in name_lower for keyword in _BLACKLIST_KEYWORDS_FULL):
+        return True
+        
+    return False
+
 def extract_artist_info(filename: str) -> List[Tuple[str, str]]:
     """
-    从文件名中提取画师信息
+    从文件名中提取画师信息，改进算法避免连续方括号合并问题
     返回格式: [(社团名, 画师名), ...]
     """
-    # 匹配[社团名 (画师名)]格式
-    pattern1 = r'\[(.*?)\s*\((.*?)\)\]'
-    matches1 = re.findall(pattern1, filename)
-    if matches1:
-        return [(group, artist) for group, artist in matches1]
+    artist_infos = []
     
-    # 匹配所有方括号内容
-    pattern2 = r'\[(.*?)\]'
-    matches2 = re.findall(pattern2, filename)
+    # 先获取所有方括号内容
+    all_brackets = re.findall(r'\[([^\[\]]+?)\]', filename)
+    logger.debug(f"🔍 找到所有方括号内容: {all_brackets}")
     
-    # 过滤黑名单关键词和特殊模式
-    filtered_matches = []
-    for match in matches2:
-        match_lower = match.lower()
+    # 方法1: 优先匹配 [社团名 (画师名)] 格式 - 但只在单个方括号内匹配
+    for bracket_content in all_brackets:
+        # 检查这个方括号内容是否符合 "社团名 (画师名)" 格式
+        match = re.match(r'^(.*?)\s*\((.*?)\)$', bracket_content.strip())
+        if match:
+            group = match.group(1).strip()
+            artist = match.group(2).strip()
+            
+            # 检查社团名和画师名是否都不在黑名单中
+            if not is_artist_name_blacklisted(artist) and not is_artist_name_blacklisted(group):
+                artist_infos.append((group, artist))
+                logger.debug(f"✅ 提取到画师信息 (格式1): [{group} ({artist})]")
+            elif not is_artist_name_blacklisted(artist):
+                # 如果社团名在黑名单但画师名不在，只保留画师名
+                artist_infos.append(('', artist))
+                logger.debug(f"✅ 提取到画师信息 (格式1-简化): [{artist}] (社团名被过滤)")
+            else:
+                logger.debug(f"⏭️ 跳过黑名单画师 (格式1): [{group} ({artist})]")
+    
+    # 如果找到了标准格式的画师信息，优先返回这些
+    if artist_infos:
+        return artist_infos
+    
+    # 方法2: 处理真正的连续方括号，但要确保它们是紧挨着的
+    # 使用更精确的正则来匹配紧挨着的方括号
+    pattern_consecutive = r'\[([^\[\]]+?)\]\s*\[([^\[\]]+?)\]'
+    matches_consecutive = re.findall(pattern_consecutive, filename)
+    
+    for first, second in matches_consecutive:
+        first = first.strip()
+        second = second.strip()
         
-        # 跳过纯数字
-        if match.isdigit():
+        # 检查是否都不在黑名单中
+        first_blacklisted = is_artist_name_blacklisted(first)
+        second_blacklisted = is_artist_name_blacklisted(second)
+        
+        if not second_blacklisted and not first_blacklisted:
+            # 都不在黑名单，第一个作为社团，第二个作为画师
+            artist_infos.append((first, second))
+            logger.debug(f"✅ 提取到画师信息 (格式2): [{first}][{second}]")
+        elif not second_blacklisted:
+            # 第一个在黑名单，第二个不在，只用第二个作为画师
+            artist_infos.append(('', second))
+            logger.debug(f"✅ 提取到画师信息 (格式2-第二个): [{second}]")
+        elif not first_blacklisted:
+            # 第二个在黑名单，第一个不在，用第一个作为画师
+            artist_infos.append(('', first))
+            logger.debug(f"✅ 提取到画师信息 (格式2-第一个): [{first}]")
+        else:
+            logger.debug(f"⏭️ 跳过黑名单内容 (格式2): [{first}][{second}]")
+    
+    # 如果找到了连续方括号格式的画师信息，返回这些
+    if artist_infos:
+        return artist_infos
+    
+    # 方法3: 处理独立的方括号内容
+    seen = set()
+    for match in all_brackets:
+        match = match.strip()
+        
+        # 避免重复处理
+        if match in seen:
             continue
+        seen.add(match)
+        
+        # 检查是否为画师名
+        if not is_artist_name_blacklisted(match):
+            artist_infos.append(('', match))
+            logger.debug(f"✅ 提取到画师信息 (格式3): [{match}]")
+        else:
+            logger.debug(f"⏭️ 跳过黑名单内容 (格式3): [{match}]")
             
-        # 跳过日期格式 (YYYYMMDD)
-        if re.match(r'^\d{8}$', match):
-            continue
-            
-        # 跳过日期格式 (YYYYMM)
-        if re.match(r'^\d{6}$', match):
-            continue
-            
-        # 跳过类似[013]这样的短数字
-        if re.match(r'^\d{1,3}$', match):
-            continue
-            
-        # 跳过版本号格式
-        if re.match(r'^v\d+$', match.lower()):
-            continue
-            
-        # 跳过数字字母混合的短标记
-        if re.match(r'^[0-9a-zA-Z]{1,6}$', match):
-            continue
-            
-        # 跳过黑名单关键词
-        if any(keyword in match_lower for keyword in _BLACKLIST_KEYWORDS_FULL):
-            continue
-            
-        filtered_matches.append(('', match))
-            
-    return filtered_matches
+    return artist_infos
 
 def find_common_artists(files: List[str], min_occurrences: int = 2) -> Dict[str, List[str]]:
     """
@@ -401,22 +489,107 @@ def get_paths_from_clipboard():
         logger.error(f"❌ 读取剪贴板时出错: {e}")
         return []
 
+def manage_blacklist():
+    """黑名单管理界面"""
+    console = Console()
+    
+    while True:
+        console.rule("[bold blue]黑名单管理")
+        console.print("[cyan]当前黑名单统计:[/cyan]")
+        console.print(f"  🎨 画师关键词: {len(BLACKLIST_KEYWORDS)} 个")
+        console.print(f"  📁 路径关键词: {len(PATH_BLACKLIST)} 个")
+        console.print(f"  📝 正则模式: {len(REGEX_PATTERNS)} 个")
+        
+        action = Prompt.ask(
+            "请选择操作",
+            choices=["view", "add", "remove", "back"],
+            default="back"
+        )
+        
+        if action == "back":
+            break
+        elif action == "view":
+            view_type = Prompt.ask(
+                "查看哪种黑名单",
+                choices=["artist", "path", "regex"],
+                default="artist"
+            )
+            if view_type == "artist":
+                console.print("[green]画师黑名单关键词:[/green]")
+                for i, keyword in enumerate(sorted(BLACKLIST_KEYWORDS), 1):
+                    console.print(f"  {i:3d}. {keyword}")
+            elif view_type == "path":
+                console.print("[green]路径黑名单关键词:[/green]")
+                for i, keyword in enumerate(sorted(PATH_BLACKLIST), 1):
+                    console.print(f"  {i:3d}. {keyword}")
+            elif view_type == "regex":
+                console.print("[green]正则模式:[/green]")
+                for i, pattern in enumerate(REGEX_PATTERNS, 1):
+                    console.print(f"  {i:3d}. {pattern}")
+        
+        elif action == "add":
+            add_type = Prompt.ask(
+                "添加到哪种黑名单",
+                choices=["artist", "path", "regex"],
+                default="artist"
+            )
+            keyword = Prompt.ask("请输入要添加的关键词/模式")
+            if keyword:
+                if add_to_blacklist(keyword, add_type):
+                    console.print(f"[green]✅ 成功添加: {keyword}[/green]")
+                else:
+                    console.print(f"[red]❌ 添加失败: {keyword}[/red]")
+        
+        elif action == "remove":
+            remove_type = Prompt.ask(
+                "从哪种黑名单移除",
+                choices=["artist", "path", "regex"],
+                default="artist"
+            )
+            keyword = Prompt.ask("请输入要移除的关键词/模式")
+            if keyword:
+                if remove_from_blacklist(keyword, remove_type):
+                    console.print(f"[green]✅ 成功移除: {keyword}[/green]")
+                else:
+                    console.print(f"[red]❌ 移除失败: {keyword}[/red]")
+
 def main():
     """主函数"""
     console = Console()
+    
+    # 检查是否有命令行参数
     if len(sys.argv) > 1:
         parser = argparse.ArgumentParser(description='寻找同画师的压缩包文件')
         parser.add_argument('-c', '--clipboard', action='store_true', help='从剪贴板读取路径')
         parser.add_argument('--ignore-blacklist', action='store_true', help='忽略路径黑名单')
         parser.add_argument('--path', help='要处理的路径')
         parser.add_argument('--min-occurrences', type=int, default=2, help='建立画师文件夹所需的最小文件数（如1则单文件也建文件夹）')
+        parser.add_argument('--manage-blacklist', action='store_true', help='管理黑名单')
         args = parser.parse_args()
+        
+        if args.manage_blacklist:
+            manage_blacklist()
+            return
     else:
-        console.rule("[bold green]同画师压缩包分类工具 参数设置")
+        # 交互式模式
+        console.rule("[bold green]同画师压缩包分类工具")
+        
+        mode = Prompt.ask(
+            "请选择模式",
+            choices=["process", "blacklist"],
+            default="process"
+        )
+        
+        if mode == "blacklist":
+            manage_blacklist()
+            return
+        
+        console.rule("[bold green]参数设置")
         clipboard = Confirm.ask("是否从剪贴板读取路径?", default=True)
         ignore_blacklist = Confirm.ask("是否忽略路径黑名单?", default=False)
         min_occurrences = Prompt.ask("建立画师文件夹所需的最小文件数（如1则单文件也建文件夹）", default="2")
         path = Prompt.ask("请输入要处理的路径（可留空，回车跳过）", default="")
+        
         class Args:
             pass
         args = Args()
@@ -427,6 +600,8 @@ def main():
             args.min_occurrences = int(min_occurrences)
         except Exception:
             args.min_occurrences = 2
+    
+    # 处理路径
     paths = []
     if args.clipboard:
         paths.extend(get_paths_from_clipboard())
@@ -443,13 +618,16 @@ def main():
             except (EOFError, KeyboardInterrupt):
                 console.print("[red]用户取消输入[/red]")
                 return
+    
     if not paths:
         logger.error("❌ 未提供任何路径")
         return
+    
     valid_paths = [path for path in paths if os.path.exists(path)]
     if not valid_paths:
         logger.error("❌ 没有有效的路径")
         return
+    
     for path in valid_paths:
         logger.info(f"🚀 开始处理目录: {path}")
         process_directory(path, ignore_blacklist=args.ignore_blacklist, min_occurrences=args.min_occurrences)
