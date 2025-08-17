@@ -7,16 +7,19 @@ from .folder_manager import FolderManager
 from .ui_manager import UIManager
 from .output_manager import OutputManager
 from .config import ConfigManager
+from crashp import PairManager
 
 
 class AppController:
     """应用程序控制器"""
-    
+
     def __init__(self):
+        # 初始化各子管理器
         self.config_manager = ConfigManager()
         self.folder_manager = FolderManager()
         self.ui_manager = UIManager()
         self.output_manager = OutputManager()
+        self.pair_manager = PairManager()
     
     def run(self):
         """运行主程序"""
@@ -104,5 +107,26 @@ class AppController:
             )
             
             self.output_manager.save_to_file(output_paths)
+
+            # 构建配对数据
+            pairs = self.pair_manager.build_pairs(similar_folders, auto_get, destination_path)
+
+            # 是否保存 JSON
+            if self.ui_manager.ask_save_pairs():
+                json_filename = self.ui_manager.get_pairs_json_filename()
+                self.pair_manager.save_pairs_to_json(pairs, json_filename)
+                self.ui_manager.notify_pairs_saved(json_filename)
+
+            # 是否执行移动
+            if self.ui_manager.ask_move_contents():
+                direction = self.ui_manager.get_move_direction()
+                conflict = self.ui_manager.get_conflict_policy()
+                result = self.pair_manager.move_contents(
+                    pairs,
+                    direction=direction,
+                    conflict=conflict,
+                    dry_run=False,
+                )
+                self.ui_manager.show_move_result(result.as_dict())
         else:
             self.ui_manager.show_no_results()

@@ -20,6 +20,11 @@ class AppConfig:
     
     # 输出文件设置
     output_filename: str = "output_paths.txt"
+    pairs_json_filename: str = "folder_pairs.json"
+
+    # 移动操作默认策略
+    default_conflict_policy: str = "skip"  # skip | overwrite | rename
+    default_move_direction: str = "source_to_target"  # source_to_target | target_to_source
     
     # 界面设置
     header_title: str = "文件夹相似度检测与批量移动工具"
@@ -90,3 +95,6 @@ class ConfigManager:
             filename: 输出文件名
         """
         self.config.output_filename = filename
+
+    def update_pairs_json_filename(self, filename: str):
+        self.config.pairs_json_filename = filename

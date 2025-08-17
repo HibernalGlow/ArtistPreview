@@ -223,24 +223,50 @@ def is_artist_name_blacklisted(name: str) -> bool:
         
     return False
 
+def find_balanced_brackets(text: str) -> List[Tuple[int, int, str]]:
+    """
+    找到所有配对的方括号及其内容
+    返回: [(start_pos, end_pos, content), ...]
+    """
+    brackets = []
+    stack = []
+    i = 0
+    
+    while i < len(text):
+        if text[i] == '[':
+            stack.append(i)
+        elif text[i] == ']' and stack:
+            start = stack.pop()
+            content = text[start+1:i]
+            # 只保留内容不为空且不包含嵌套方括号的
+            if content and '[' not in content and ']' not in content:
+                brackets.append((start, i, content))
+        i += 1
+    
+    return brackets
+
 def extract_artist_info(filename: str) -> List[Tuple[str, str]]:
     """
-    从文件名中提取画师信息，改进算法避免连续方括号合并问题
+    从文件名中提取画师信息，使用字符串匹配避免正则表达式问题
     返回格式: [(社团名, 画师名), ...]
     """
     artist_infos = []
     
-    # 先获取所有方括号内容
-    all_brackets = re.findall(r'\[([^\[\]]+?)\]', filename)
-    logger.debug(f"🔍 找到所有方括号内容: {all_brackets}")
+    # 找到所有配对的方括号
+    brackets = find_balanced_brackets(filename)
+    bracket_contents = [content.strip() for _, _, content in brackets if content.strip()]
     
-    # 方法1: 优先匹配 [社团名 (画师名)] 格式 - 但只在单个方括号内匹配
-    for bracket_content in all_brackets:
-        # 检查这个方括号内容是否符合 "社团名 (画师名)" 格式
-        match = re.match(r'^(.*?)\s*\((.*?)\)$', bracket_content.strip())
-        if match:
-            group = match.group(1).strip()
-            artist = match.group(2).strip()
+    logger.debug(f"🔍 找到配对方括号内容: {bracket_contents}")
+    
+    # 方法1: 优先匹配包含圆括号的格式 "社团名 (画师名)"
+    for content in bracket_contents:
+        # 检查是否包含圆括号
+        paren_start = content.find('(')
+        paren_end = content.rfind(')')
+        
+        if paren_start > 0 and paren_end > paren_start:
+            group = content[:paren_start].strip()
+            artist = content[paren_start+1:paren_end].strip()
             
             # 检查社团名和画师名是否都不在黑名单中
             if not is_artist_name_blacklisted(artist) and not is_artist_name_blacklisted(group):
@@ -257,33 +283,36 @@ def extract_artist_info(filename: str) -> List[Tuple[str, str]]:
     if artist_infos:
         return artist_infos
     
-    # 方法2: 处理真正的连续方括号，但要确保它们是紧挨着的
-    # 使用更精确的正则来匹配紧挨着的方括号
-    pattern_consecutive = r'\[([^\[\]]+?)\]\s*\[([^\[\]]+?)\]'
-    matches_consecutive = re.findall(pattern_consecutive, filename)
-    
-    for first, second in matches_consecutive:
-        first = first.strip()
-        second = second.strip()
+    # 方法2: 查找相邻的方括号对
+    brackets_with_pos = find_balanced_brackets(filename)
+    for i in range(len(brackets_with_pos) - 1):
+        curr_start, curr_end, curr_content = brackets_with_pos[i]
+        next_start, next_end, next_content = brackets_with_pos[i + 1]
         
-        # 检查是否都不在黑名单中
-        first_blacklisted = is_artist_name_blacklisted(first)
-        second_blacklisted = is_artist_name_blacklisted(second)
-        
-        if not second_blacklisted and not first_blacklisted:
-            # 都不在黑名单，第一个作为社团，第二个作为画师
-            artist_infos.append((first, second))
-            logger.debug(f"✅ 提取到画师信息 (格式2): [{first}][{second}]")
-        elif not second_blacklisted:
-            # 第一个在黑名单，第二个不在，只用第二个作为画师
-            artist_infos.append(('', second))
-            logger.debug(f"✅ 提取到画师信息 (格式2-第二个): [{second}]")
-        elif not first_blacklisted:
-            # 第二个在黑名单，第一个不在，用第一个作为画师
-            artist_infos.append(('', first))
-            logger.debug(f"✅ 提取到画师信息 (格式2-第一个): [{first}]")
-        else:
-            logger.debug(f"⏭️ 跳过黑名单内容 (格式2): [{first}][{second}]")
+        # 检查两个方括号是否相邻（中间只有空格或没有字符）
+        between_text = filename[curr_end + 1:next_start].strip()
+        if len(between_text) == 0:  # 紧挨着的方括号
+            curr_content = curr_content.strip()
+            next_content = next_content.strip()
+            
+            # 检查是否都不在黑名单中
+            curr_blacklisted = is_artist_name_blacklisted(curr_content)
+            next_blacklisted = is_artist_name_blacklisted(next_content)
+            
+            if not next_blacklisted and not curr_blacklisted:
+                # 都不在黑名单，第一个作为社团，第二个作为画师
+                artist_infos.append((curr_content, next_content))
+                logger.debug(f"✅ 提取到画师信息 (格式2): [{curr_content}][{next_content}]")
+            elif not next_blacklisted:
+                # 第一个在黑名单，第二个不在，只用第二个作为画师
+                artist_infos.append(('', next_content))
+                logger.debug(f"✅ 提取到画师信息 (格式2-第二个): [{next_content}]")
+            elif not curr_blacklisted:
+                # 第二个在黑名单，第一个不在，用第一个作为画师
+                artist_infos.append(('', curr_content))
+                logger.debug(f"✅ 提取到画师信息 (格式2-第一个): [{curr_content}]")
+            else:
+                logger.debug(f"⏭️ 跳过黑名单内容 (格式2): [{curr_content}][{next_content}]")
     
     # 如果找到了连续方括号格式的画师信息，返回这些
     if artist_infos:
@@ -291,20 +320,18 @@ def extract_artist_info(filename: str) -> List[Tuple[str, str]]:
     
     # 方法3: 处理独立的方括号内容
     seen = set()
-    for match in all_brackets:
-        match = match.strip()
-        
+    for content in bracket_contents:
         # 避免重复处理
-        if match in seen:
+        if content in seen:
             continue
-        seen.add(match)
+        seen.add(content)
         
         # 检查是否为画师名
-        if not is_artist_name_blacklisted(match):
-            artist_infos.append(('', match))
-            logger.debug(f"✅ 提取到画师信息 (格式3): [{match}]")
+        if not is_artist_name_blacklisted(content):
+            artist_infos.append(('', content))
+            logger.debug(f"✅ 提取到画师信息 (格式3): [{content}]")
         else:
-            logger.debug(f"⏭️ 跳过黑名单内容 (格式3): [{match}]")
+            logger.debug(f"⏭️ 跳过黑名单内容 (格式3): [{content}]")
             
     return artist_infos
 

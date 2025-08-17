@@ -179,6 +179,46 @@ class UIManager:
             choices=["1", "2"],
             default="1"
         )
+
+    # --- 新增：配对 JSON & 移动内容交互 ---
+    def ask_save_pairs(self) -> bool:
+        from rich.prompt import Confirm
+        return Confirm.ask("是否保存配对 JSON?", default=True)
+
+    def get_pairs_json_filename(self) -> str:
+        return Prompt.ask(
+            "配对 JSON 文件名", default=self.config.pairs_json_filename
+        )
+
+    def ask_move_contents(self) -> bool:
+        from rich.prompt import Confirm
+        return Confirm.ask("是否执行内容移动/合并?", default=False)
+
+    def get_move_direction(self) -> str:
+        return Prompt.ask(
+            "选择移动方向 (source_to_target / target_to_source)",
+            choices=["source_to_target", "target_to_source"],
+            default=self.config.default_move_direction,
+        )
+
+    def get_conflict_policy(self) -> str:
+        return Prompt.ask(
+            "冲突策略 (skip=跳过 overwrite=覆盖 rename=改名)",
+            choices=["skip", "overwrite", "rename"],
+            default=self.config.default_conflict_policy,
+        )
+
+    def notify_pairs_saved(self, path: str):
+        console.print(f"[{self.config.colors['success']}]配对已保存: {path}[/{self.config.colors['success']}]")
+
+    def show_move_result(self, result_dict: dict):
+        from rich.table import Table
+        table = Table(title="移动结果统计")
+        table.add_column("指标")
+        table.add_column("数量", justify="right")
+        for k, v in result_dict.items():
+            table.add_row(k, str(v))
+        console.print(table)
     
     def show_no_results(self):
         """显示无结果信息"""
