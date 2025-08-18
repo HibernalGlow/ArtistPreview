@@ -8,6 +8,6 @@
 设计目标：与 crashu 原有扫描逻辑解耦，可独立被其它工具调用。
 """
 
-from .__main__ import PairManager, PairMoveResult
+from .__main__ import PairManager, PairMoveResult, PairRecord
 
-__all__ = ["PairManager", "PairMoveResult"]
+__all__ = ["PairManager", "PairMoveResult", "PairRecord"]

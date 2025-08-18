@@ -113,9 +113,9 @@ class AppController:
 
             # 是否保存 JSON
             if self.ui_manager.ask_save_pairs():
-                json_filename = self.ui_manager.get_pairs_json_filename()
-                self.pair_manager.save_pairs_to_json(pairs, json_filename)
-                self.ui_manager.notify_pairs_saved(json_filename)
+                json_path = self.ui_manager.get_pairs_json_filename(destination_path)
+                self.pair_manager.save_pairs_to_json(pairs, json_path)
+                self.ui_manager.notify_pairs_saved(json_path)
 
             # 是否执行移动
             if self.ui_manager.ask_move_contents():

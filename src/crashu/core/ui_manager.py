@@ -185,21 +185,45 @@ class UIManager:
         from rich.prompt import Confirm
         return Confirm.ask("是否保存配对 JSON?", default=True)
 
-    def get_pairs_json_filename(self) -> str:
-        return Prompt.ask(
-            "配对 JSON 文件名", default=self.config.pairs_json_filename
-        )
+        def get_pairs_json_filename(self, destination_path: str) -> str:
+                """获取保存配对 JSON 的完整路径
+
+                默认保存到目标目录 destination_path 下。
+                用户可输入：
+                    1) 仅文件名 -> 自动拼接到目标目录
+                    2) 相对路径  -> 先拼到目标目录
+                    3) 绝对路径  -> 原样使用
+                """
+                import os
+
+                default_path = os.path.join(destination_path, self.config.pairs_json_filename)
+                user_input = Prompt.ask("配对 JSON 文件路径 (回车使用默认保存到目标目录)", default=default_path)
+                # 若为相对路径，拼接到目标目录
+                if not os.path.isabs(user_input):
+                        return os.path.join(destination_path, user_input)
+                return user_input
 
     def ask_move_contents(self) -> bool:
         from rich.prompt import Confirm
         return Confirm.ask("是否执行内容移动/合并?", default=False)
 
     def get_move_direction(self) -> str:
-        return Prompt.ask(
-            "选择移动方向 (source_to_target / target_to_source)",
-            choices=["source_to_target", "target_to_source"],
-            default=self.config.default_move_direction,
+        """获取移动方向，使用数字 1/2 选择。
+
+        1 = source_to_target (源 -> 目标)
+        2 = target_to_source (目标 -> 源)
+        默认值由 config.default_move_direction（旧值仍可为字符串）映射。
+        """
+        mapping = {"1": "source_to_target", "2": "target_to_source"}
+        # 兼容旧配置（字符串）
+        reverse_mapping = {v: k for k, v in mapping.items()}
+        default_choice = reverse_mapping.get(self.config.default_move_direction, "1")
+        choice = Prompt.ask(
+            "选择移动方向 (1=源->目标 2=目标->源)",
+            choices=["1", "2"],
+            default=default_choice,
         )
+        return mapping[choice]
 
     def get_conflict_policy(self) -> str:
         return Prompt.ask(

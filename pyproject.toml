@@ -39,6 +39,7 @@ samea = "samea.__main__:main"
 lista = "lista.__main__:main"
 linedup = "linedup.__main__:main"
 crashu = "crashu.__main__:main"
+crashp = "crashp.cli:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 

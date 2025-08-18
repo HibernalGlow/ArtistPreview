@@ -24,7 +24,7 @@ class AppConfig:
 
     # 移动操作默认策略
     default_conflict_policy: str = "skip"  # skip | overwrite | rename
-    default_move_direction: str = "source_to_target"  # source_to_target | target_to_source
+    default_move_direction: str = "target_to_source"  # 方向: source_to_target 或 target_to_source (界面用数字1/2选择)
     
     # 界面设置
     header_title: str = "文件夹相似度检测与批量移动工具"
