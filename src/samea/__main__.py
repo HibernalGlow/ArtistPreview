@@ -368,21 +368,35 @@ def clean_path(path: str) -> str:
     """去除路径前后空格和单双引号，并标准化分隔符"""
     return os.path.normpath(path.strip().strip('"').strip("'"))
 
-def process_directory(directory: str, ignore_blacklist: bool = False, min_occurrences: int = 2) -> None:
-    """处理单个目录，并保存处理数据到json"""
+def process_directory(directory: str, ignore_blacklist: bool = False, min_occurrences: int = 2, centralize: bool = False) -> None:
+    """处理单个目录，并保存处理数据到json
+
+    Args:
+        directory: 待处理根目录
+        ignore_blacklist: 是否忽略路径黑名单
+        min_occurrences: 建立画师文件夹所需的最小文件数
+        centralize: 是否集中收纳到 [00画师分类] 目录下。
+            False 时：直接在当前目录下建立画师子目录 (默认行为)
+            True  时：在目录下建立 [00画师分类] 作为总收纳目录
+    """
     # 路径清理
     directory = clean_path(directory)
     # 检查目录本身是否在黑名单中
     if not ignore_blacklist and is_path_blacklisted(directory):
         logger.warning(f"⚠️ 跳过黑名单目录: {directory}")
         return
-    # 创建画师分类总目录
-    artists_base_dir = os.path.join(directory, "[00画师分类]")
-    try:
-        os.makedirs(artists_base_dir, exist_ok=True)
-    except Exception as e:
-        logger.error(f"❌ 创建画师分类目录失败: {str(e)}")
-        return
+    # 决定画师分类基目录
+    if centralize:
+        artists_base_dir = os.path.join(directory, "[00画师分类]")
+        try:
+            os.makedirs(artists_base_dir, exist_ok=True)
+        except Exception as e:
+            logger.error(f"❌ 创建画师分类目录失败: {str(e)}")
+            return
+        logger.info("📁 使用集中收纳模式: 文件将移动到 [00画师分类]/* 内")
+    else:
+        artists_base_dir = directory
+        logger.info("📁 使用就地整理模式: 文件将直接移动到当前目录下新建的画师子目录内")
     # 收集所有压缩文件（跳过黑名单目录）
     all_files = []
     logger.info("🔍 正在扫描文件...")
@@ -460,7 +474,10 @@ def process_directory(directory: str, ignore_blacklist: bool = False, min_occurr
                         continue
                     shutil.move(src_path, dst_path)
                     success_count += 1
-                    logger.info(f"✅ 已移动: {file} -> [00画师分类]/{artist_name}/")
+                    if centralize:
+                        logger.info(f"✅ 已移动: {file} -> [00画师分类]/{artist_name}/")
+                    else:
+                        logger.info(f"✅ 已移动: {file} -> {artist_name}/")
                 except Exception as e:
                     error_count += 1
                     fail_detail.append(f"移动失败 {os.path.basename(file)}: {str(e)}")
@@ -590,39 +607,42 @@ def main():
         parser.add_argument('-c', '--clipboard', action='store_true', help='从剪贴板读取路径')
         parser.add_argument('--ignore-blacklist', action='store_true', help='忽略路径黑名单')
         parser.add_argument('--path', help='要处理的路径')
-        parser.add_argument('--min-occurrences', type=int, default=2, help='建立画师文件夹所需的最小文件数（如1则单文件也建文件夹）')
+        parser.add_argument('--min-occurrences', type=int, default=1, help='建立画师文件夹所需的最小文件数（如1则单文件也建文件夹）')
         parser.add_argument('--manage-blacklist', action='store_true', help='管理黑名单')
+        parser.add_argument('--centralize', action='store_true', help='集中收纳到[00画师分类]目录 (默认否)')
         args = parser.parse_args()
-        
+
         if args.manage_blacklist:
             manage_blacklist()
             return
     else:
         # 交互式模式
         console.rule("[bold green]同画师压缩包分类工具")
-        
+
         mode = Prompt.ask(
             "请选择模式",
             choices=["process", "blacklist"],
             default="process"
         )
-        
+
         if mode == "blacklist":
             manage_blacklist()
             return
-        
+
         console.rule("[bold green]参数设置")
         clipboard = Confirm.ask("是否从剪贴板读取路径?", default=True)
         ignore_blacklist = Confirm.ask("是否忽略路径黑名单?", default=False)
-        min_occurrences = Prompt.ask("建立画师文件夹所需的最小文件数（如1则单文件也建文件夹）", default="2")
+        min_occurrences = Prompt.ask("建立画师文件夹所需的最小文件数（如1则单文件也建文件夹）", default="1")
         path = Prompt.ask("请输入要处理的路径（可留空，回车跳过）", default="")
-        
+        centralize = Confirm.ask("是否集中收纳到 [00画师分类] 目录?", default=False)
+
         class Args:
             pass
         args = Args()
         args.clipboard = clipboard
         args.ignore_blacklist = ignore_blacklist
         args.path = path
+        args.centralize = centralize
         try:
             args.min_occurrences = int(min_occurrences)
         except Exception:
@@ -657,7 +677,7 @@ def main():
     
     for path in valid_paths:
         logger.info(f"🚀 开始处理目录: {path}")
-        process_directory(path, ignore_blacklist=args.ignore_blacklist, min_occurrences=args.min_occurrences)
+        process_directory(path, ignore_blacklist=args.ignore_blacklist, min_occurrences=args.min_occurrences, centralize=getattr(args, 'centralize', False))
         logger.info(f"✨ 目录处理完成: {path}")
 
 if __name__ == "__main__":

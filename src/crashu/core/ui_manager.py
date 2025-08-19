@@ -27,26 +27,30 @@ class UIManager:
         ))
     
     def ask_auto_get(self) -> bool:
-        """
-        询问是否自动获取目标文件夹
-        
-        Returns:
-            是否自动获取
-        """
+        """询问是否自动获取目标文件夹 (默认: 是)"""
         return Confirm.ask(
-            "是否自动获取目标文件夹（从指定目录下的一级子目录）？", 
+            "是否自动获取目标文件夹（从指定目录或剪贴板指定目录的一级子目录）？",
             default=True
         )
     
     def get_auto_dir(self) -> str:
+        """获取自动获取目录。
+        优先尝试从剪贴板读取一个存在的目录路径；若失败则回退到输入提示。
         """
-        获取自动获取目录
-        
-        Returns:
-            自动获取目录路径
-        """
+        try:
+            import pyperclip, os
+            raw = pyperclip.paste()
+            if raw:
+                # 支持多行，取第一个存在的目录
+                for line in raw.splitlines():
+                    cand = line.strip().strip('"').strip("'")
+                    if cand and os.path.isdir(cand):
+                        console.print(f"[green]已从剪贴板获取目录: {cand}[/green]")
+                        return cand
+        except Exception:
+            pass
         return Prompt.ask(
-            "请输入用于自动获取目标文件夹的目录", 
+            "请输入用于自动获取目标文件夹的目录 (剪贴板无有效目录)",
             default=self.config.default_auto_dir
         )
     
@@ -177,7 +181,7 @@ class UIManager:
         return Prompt.ask(
             f"[bold {self.config.colors['warning']}]选择输出格式[/bold {self.config.colors['warning']}]",
             choices=["1", "2"],
-            default="1"
+            default="2"
         )
 
     # --- 新增：配对 JSON & 移动内容交互 ---
@@ -185,23 +189,26 @@ class UIManager:
         from rich.prompt import Confirm
         return Confirm.ask("是否保存配对 JSON?", default=True)
 
-        def get_pairs_json_filename(self, destination_path: str) -> str:
-                """获取保存配对 JSON 的完整路径
+    def get_pairs_json_filename(self, destination_path: str) -> str:
+        """获取保存配对 JSON 的完整路径。
 
-                默认保存到目标目录 destination_path 下。
-                用户可输入：
-                    1) 仅文件名 -> 自动拼接到目标目录
-                    2) 相对路径  -> 先拼到目标目录
-                    3) 绝对路径  -> 原样使用
-                """
-                import os
-
-                default_path = os.path.join(destination_path, self.config.pairs_json_filename)
-                user_input = Prompt.ask("配对 JSON 文件路径 (回车使用默认保存到目标目录)", default=default_path)
-                # 若为相对路径，拼接到目标目录
-                if not os.path.isabs(user_input):
-                        return os.path.join(destination_path, user_input)
-                return user_input
+        规则:
+          1) 直接回车 -> 使用 destination_path/默认文件名
+          2) 输入文件名 -> 视为相对路径，拼接到 destination_path
+          3) 输入相对路径 -> 也拼接到 destination_path
+          4) 输入绝对路径 -> 原样使用
+        """
+        import os
+        default_path = os.path.join(destination_path, self.config.pairs_json_filename)
+        user_input = Prompt.ask(
+            "配对 JSON 文件路径 (回车使用默认)",
+            default=default_path
+        ).strip()
+        if not user_input:
+            return default_path
+        if not os.path.isabs(user_input):
+            return os.path.join(destination_path, user_input)
+        return user_input
 
     def ask_move_contents(self) -> bool:
         from rich.prompt import Confirm
