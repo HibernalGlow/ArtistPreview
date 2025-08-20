@@ -28,6 +28,8 @@ dependencies = [
     "textual>=0.22.0",
     "opencc-python-reimplemented",
     "tinydb>=4.8.0",
+    "typer>=0.12.0",
+    "rich>=13.0.0",
 ]
 
 [project.urls]
@@ -37,7 +39,8 @@ dependencies = [
 [project.scripts]
 previewa = "previewa.__main__:main"
 samea = "samea.__main__:main"
-lista = "lista.__main__:main"
+# 提供新的 Typer 交互 CLI 入口 (可并存)
+lista = "lista.cli.app:main_entry"
 linedup = "linedup.__main__:main"
 crashu = "crashu.__main__:main"
 crashp = "crashp.cli:main"
