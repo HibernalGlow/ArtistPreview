@@ -171,7 +171,14 @@ def output(
     overwrite: bool = typer.Option(True, '--overwrite/--no-overwrite', help='允许覆盖已存在文件'),
     copy: bool = typer.Option(False, '--copy', help='复制输出文本到剪贴板')
 ):
-    """统一输出: 终端展示同时写入 JSON 文件。keyword 提供则执行搜索，否则按分类列出。"""
+    """统一输出: 不再支持管道读取；默认生成固定文件名，方便其它工具读取。
+
+    默认文件命名规则(未指定 --out):
+      format == names -> lista_{category或search}_names.txt (纯文本)
+      format == json  -> lista_{category或search}_json.json
+      format == table -> lista_{category或search}_table.json
+    """
+    # 获取数据
     if keyword:
         rows = state.store.search(keyword)
         title = f'搜索: {keyword}'
@@ -188,7 +195,7 @@ def output(
         names = sorted({n for r in rows for n in r.names})
         output_text = '\n'.join(names)
         console.print(output_text)
-        json_data = names  # 简化结构
+        json_data = names
     else:  # table
         table = Table(title=f'{title} ({len(rows)})')
         table.add_column('Folder', style='cyan', overflow='fold')
@@ -197,7 +204,6 @@ def output(
         for r in rows:
             table.add_row(r.folder, r.category, ','.join(r.names))
         console.print(table)
-        # table 模式下，JSON 仍输出完整结构，剪贴板复制 names 列
         output_text = '\n'.join(sorted({n for r in rows for n in r.names}))
 
     if copy and output_text:
@@ -205,13 +211,20 @@ def output(
         console.print('[green]已复制到剪贴板[/green]')
 
     if out is None:
-        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        base = 'search' if keyword else f'list_{category}'
-        out = Path(f'{base}_{format}_{ts}.json')
+        base = 'search' if keyword else category
+        if format == 'names':
+            out = Path(f'lista_{base}_names.txt')
+        elif format == 'json':
+            out = Path(f'lista_{base}_json.json')
+        else:
+            out = Path(f'lista_{base}_table.json')
     if out.exists() and not overwrite:
         raise typer.BadParameter(f'文件已存在: {out}')
-    out.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding='utf-8')
-    console.print(f'[green]已写出 JSON -> {out}[/green]')
+    if format == 'names':
+        out.write_text(output_text, encoding='utf-8')
+    else:
+        out.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding='utf-8')
+    console.print(f'[green]已写出 -> {out}[/green]')
 
 def main_entry():
     """脚本入口: 无参数 -> Rich 菜单交互；有参数 -> Typer CLI"""

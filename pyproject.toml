@@ -44,10 +44,11 @@ lista = "lista.cli.app:main_entry"
 linedup = "linedup.__main__:main"
 crashu = "crashu.__main__:main"
 crashp = "crashp.cli:main"
+searcha = "searcha.cli:main_entry"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["previewa*"]
+include = ["previewa*","lista*","searcha*","samea*","crashu*","crashp*","linedup*"]
 exclude = ["*.tests", "*.tests.*", "tests.*", "tests"]

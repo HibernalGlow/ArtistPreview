@@ -19,3 +19,4 @@ lista.html
 *.yaml
 /src/linedup/test
 output_paths.txt
+*.txt
