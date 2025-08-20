@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.7"
 resolution-markers = [
     "python_full_version >= '3.9'",
@@ -1496,26 +1496,12 @@ wheels = [
 ]
 
 [[package]]
-name = "opencc"
-version = "1.1.9"
+name = "opencc-python-reimplemented"
+version = "0.1.7"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e6/a2/0e86df1284143c389a3a6e33b159394da34b500a62b2b9c918949a2e6438/opencc-1.1.9.tar.gz", hash = "sha256:8ad72283732951303390fae33a1ceda98ac9b03368a8f2912edc934d74077e4a", size = 3409025, upload-time = "2024-08-08T04:55:32.483Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/6d/c6f37eed651dd6b752e50f80a93396cdaa42a6acc6ce05ad7452303ea511/opencc-python-reimplemented-0.1.7.tar.gz", hash = "sha256:4f777ea3461a25257a7b876112cfa90bb6acabc6dfb843bf4d11266e43579dee", size = 482566, upload-time = "2023-02-11T03:58:42.25Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/d0/e17c4251f7981d5b5f5b6250e6a282170b57fe4a188b8966c1978c16fb5b/OpenCC-1.1.9-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:a33941dd4cb67457e6f44dfe36dddc30a602363a4f6a29b41d79b062b332c094", size = 1481497, upload-time = "2024-08-08T05:03:32.086Z" },
-    { url = "https://files.pythonhosted.org/packages/48/dd/9cf7897483f530a174b626e06d1ff3b0d074541547f84b2e221755311ea6/OpenCC-1.1.9-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:92769f9a60301574c73096f9ab8a9060fe0d13a9f8266735d82a2a3a92adbd26", size = 1653097, upload-time = "2024-08-08T04:55:21.676Z" },
-    { url = "https://files.pythonhosted.org/packages/47/08/f311ac5422ddc51c3294be76f2b03f701458e6929efc0ac30f5cc9b11f90/OpenCC-1.1.9-cp310-cp310-win_amd64.whl", hash = "sha256:84e35e5ecfad445a64c0dcd6567d9e9f3a6aed9a6ffd89cdbc071f36cb9e089e", size = 1755152, upload-time = "2024-08-08T04:58:31.245Z" },
-    { url = "https://files.pythonhosted.org/packages/64/89/91796feec4bbfd7539a0f773f2c9bc83c0138bcb585d94114099bcfa7bf6/OpenCC-1.1.9-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:3fb7c84f7c182cb5208e7bc1c104b817a3ca1a8fe111d4d19816be0d6e1ab396", size = 1482997, upload-time = "2024-08-08T05:03:34.153Z" },
-    { url = "https://files.pythonhosted.org/packages/bb/07/4eef5a5c43221470af3a9e12fce024c5b9451618c4307c7980c2d6e298b3/OpenCC-1.1.9-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:64994c68796d93cdba42f37e0c073fb8ed6f9d6707232be0ba84f24dc5a36bbb", size = 1654464, upload-time = "2024-08-08T04:55:24.014Z" },
-    { url = "https://files.pythonhosted.org/packages/b1/51/b77472e225a2055cb21ab308cabb957e4ec83d2bf427267362c5cb98dacc/OpenCC-1.1.9-cp311-cp311-win_amd64.whl", hash = "sha256:9f6a1413ca2ff490e65a55822e4cae8c3f104bfab46355288de4893a14470fbb", size = 1756305, upload-time = "2024-08-08T04:58:33.07Z" },
-    { url = "https://files.pythonhosted.org/packages/8c/58/d1f270e9d329d4f4f7c1963f9700aa9c9d6f0c5042c641005da6369b4c8e/OpenCC-1.1.9-cp312-cp312-macosx_10_9_x86_64.whl", hash = "sha256:48bc3e37942b91a9cf51f525631792f79378e5332bdba9e10c05f6e7fe9036ca", size = 1482516, upload-time = "2024-08-08T05:03:36.889Z" },
-    { url = "https://files.pythonhosted.org/packages/23/f0/ddd3522a142ebb66b30c7d30509de940979c2fb30a9edbf417fdfc37278d/OpenCC-1.1.9-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:1c5d1489bdaf9dc2865f0ea30eb565093253e73c1868d9c19554c8a044b545d4", size = 1653167, upload-time = "2024-08-08T04:55:26.395Z" },
-    { url = "https://files.pythonhosted.org/packages/2c/67/fb4fb43c1502fd9f14646211d9643ef67e8123455e176af6668265d2f875/OpenCC-1.1.9-cp312-cp312-win_amd64.whl", hash = "sha256:64f8d22c8505b65e8ee2d6e73241cbc92785d38b3c93885b423d7c4fcd31c679", size = 1756337, upload-time = "2024-08-08T04:58:34.798Z" },
-    { url = "https://files.pythonhosted.org/packages/12/95/7ad360f2d1baa498bceb329c7ab92829409893b2c60f1844b75d2c32b406/OpenCC-1.1.9-cp38-cp38-macosx_10_9_x86_64.whl", hash = "sha256:f4267b66ed6e656b5d8199f94e9673950ac39d49ebaf0e7927330801f06f038f", size = 1481399, upload-time = "2024-08-08T05:03:38.669Z" },
-    { url = "https://files.pythonhosted.org/packages/ea/e4/3076b834fa58e6b946b25f0e7079d343776f6c5ab6312a2d722090dce207/OpenCC-1.1.9-cp38-cp38-manylinux2014_x86_64.whl", hash = "sha256:c6d5f9756ed08e67de36c53dc4d8f0bdc72889d6f57a8fc4d8b073d99c58d4dc", size = 1653117, upload-time = "2024-08-08T04:55:28.465Z" },
-    { url = "https://files.pythonhosted.org/packages/7e/a7/5338e680e7f8e1372d042c4e948bc98c922b64b7637835ca91e1db404465/OpenCC-1.1.9-cp38-cp38-win_amd64.whl", hash = "sha256:a6c2650bd3d6a9e3c31fc2057e0f36122c9507af1661627542f618c97d420293", size = 1755737, upload-time = "2024-08-08T04:58:36.657Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/d1/561ff2934cefdd61367d5f1c8fade111e943a2636526aac72155815b74db/OpenCC-1.1.9-cp39-cp39-macosx_10_9_x86_64.whl", hash = "sha256:4d66473405c2e360ef346fe1625f201f3f3c4adbb16d5c1c7749a150ae42d875", size = 1481579, upload-time = "2024-08-08T05:03:39.917Z" },
-    { url = "https://files.pythonhosted.org/packages/3d/24/6db1dcee505f0a35974bcfb67e199198081b594358ed54af51c2109d1b6f/OpenCC-1.1.9-cp39-cp39-manylinux2014_x86_64.whl", hash = "sha256:436c43e0855b4f9c9e4fd1191e8ac638e9d9f2c7e2d5753952e6e31aa231d36c", size = 1653349, upload-time = "2024-08-08T04:55:30.86Z" },
-    { url = "https://files.pythonhosted.org/packages/57/83/96c2133a6c2b7b2dd441e1e76a7087e02d9a40c83a90aec817fe26fc1c00/OpenCC-1.1.9-cp39-cp39-win_amd64.whl", hash = "sha256:b4c36d6974afd94b444ad5ad17364f40d228092ce89b86e46653f7ff38075201", size = 1755812, upload-time = "2024-08-08T04:58:38.261Z" },
+    { url = "https://files.pythonhosted.org/packages/30/6b/055b7806f320cc8f2cdf23c5f70221c0dc1683fca9ffaf76dfc2ad4b91b6/opencc_python_reimplemented-0.1.7-py2.py3-none-any.whl", hash = "sha256:41b3b92943c7bed291f448e9c7fad4b577c8c2eae30fcfe5a74edf8818493aa6", size = 481813, upload-time = "2023-02-11T03:58:39.66Z" },
 ]
 
 [[package]]
@@ -1553,7 +1539,7 @@ dependencies = [
     { name = "beautifulsoup4" },
     { name = "jinja2" },
     { name = "loguru" },
-    { name = "opencc" },
+    { name = "opencc-python-reimplemented" },
     { name = "pyperclip" },
     { name = "pyyaml", version = "6.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
     { name = "pyyaml", version = "6.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.8'" },
@@ -1562,6 +1548,8 @@ dependencies = [
     { name = "textual", version = "0.43.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
     { name = "textual", version = "0.73.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.8' and python_full_version < '3.8.1'" },
     { name = "textual", version = "3.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.8.1'" },
+    { name = "tinydb", version = "4.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
+    { name = "tinydb", version = "4.8.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.8'" },
 ]
 
 [package.metadata]
@@ -1570,11 +1558,12 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.9.0" },
     { name = "jinja2", specifier = ">=3.0.0" },
     { name = "loguru", specifier = ">=0.7.0" },
-    { name = "opencc", specifier = ">=1.1.9" },
+    { name = "opencc-python-reimplemented" },
     { name = "pyperclip", specifier = ">=1.8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "requests", specifier = ">=2.25.0" },
     { name = "textual", specifier = ">=0.22.0" },
+    { name = "tinydb", specifier = ">=4.8.0" },
 ]
 
 [[package]]
@@ -2102,6 +2091,35 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6d/96/02751746cf6950e9e8968186cb42eed1e52d91e2c80cc52bb19589e25900/textual-3.3.0.tar.gz", hash = "sha256:aa162b92dde93c5231e3689cdf26b141e86a77ac0a5ba96069bc9547e44119ae", size = 1618996, upload-time = "2025-06-01T14:01:40.336Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/78/c2/c8be0b51bfce3278e057e1563a477bf128097bf5ce82ab21b0bbbcb30986/textual-3.3.0-py3-none-any.whl", hash = "sha256:463809791fd2c979c91ff0b54e25f2e57874828815e51a6503f32cb2e21e4eb0", size = 687997, upload-time = "2025-06-01T14:01:37.654Z" },
+]
+
+[[package]]
+name = "tinydb"
+version = "4.8.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.8'",
+]
+dependencies = [
+    { name = "typing-extensions", version = "4.7.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version <= '3.7'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/30/0b/9e75a8d3333a6a3d9b36de04bf87a37a8d7f100035ea23c9c37bf0a112ab/tinydb-4.8.0.tar.gz", hash = "sha256:6dd686a9c5a75dfa9280088fd79a419aefe19cd7f4bd85eba203540ef856d564", size = 32178, upload-time = "2023-06-12T19:06:34.864Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/c4/9a1721139a6087ab3df4ba99ac82da5d88f92b1ea5027b0c411ce09b1d70/tinydb-4.8.0-py3-none-any.whl", hash = "sha256:30c06d12383d7c332e404ca6a6103fb2b32cbf25712689648c39d9a6bd34bd3d", size = 24734, upload-time = "2023-06-12T19:06:33.141Z" },
+]
+
+[[package]]
+name = "tinydb"
+version = "4.8.2"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.9'",
+    "python_full_version >= '3.8.1' and python_full_version < '3.9'",
+    "python_full_version >= '3.8' and python_full_version < '3.8.1'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a0/79/4af51e2bb214b6ea58f857c51183d92beba85b23f7ba61c983ab3de56c33/tinydb-4.8.2.tar.gz", hash = "sha256:f7dfc39b8d7fda7a1ca62a8dbb449ffd340a117c1206b68c50b1a481fb95181d", size = 32566, upload-time = "2024-10-12T15:24:01.13Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/17/853354204e1ca022d6b7d011ca7f3206c4f8faa3cc743e92609b49c1d83f/tinydb-4.8.2-py3-none-any.whl", hash = "sha256:f97030ee5cbc91eeadd1d7af07ab0e48ceb04aa63d4a983adbaca4cba16e86c3", size = 24888, upload-time = "2024-10-12T15:23:59.833Z" },
 ]
 
 [[package]]

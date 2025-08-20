@@ -27,6 +27,7 @@ dependencies = [
     "aiohttp>=3.8.0",
     "textual>=0.22.0",
     "opencc-python-reimplemented",
+    "tinydb>=4.8.0",
 ]
 
 [project.urls]

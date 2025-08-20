@@ -17,6 +17,5 @@ artist_cache.json
 lista.html
 *.html
 *.yaml
-*.json
 /src/linedup/test
 output_paths.txt
