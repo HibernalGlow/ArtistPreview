@@ -14,6 +14,8 @@ from datetime import datetime
 import os
 import json as json_lib
 
+from .interactive import interactive_menu  # 分离的交互菜单
+
 app = typer.Typer(add_completion=False, help="画师信息维护工具 (Typer 交互版)")
 console = Console()
 
@@ -127,7 +129,7 @@ def search(keyword: str, format: str = typer.Option('table','--format','-F'), co
             names.extend(r.names)
         text = '\n'.join(sorted(set(names)))
     else:
-        table = Table(title=f"搜索: {keyword}")
+        table = Table(title=f"搜索: {keyword} ({len(rows)})")
         table.add_column('Folder', style='cyan', overflow='fold')
         table.add_column('Category', style='magenta')
         table.add_column('Names', style='green')
@@ -151,119 +153,72 @@ def export(category: str = typer.Option('all','--category','-g'), out: Path = ty
     state.store.export(category, out)
     console.print(f"已导出 -> {out}")
 
-def _stats_panel():
+@app.command('stats')
+def stats():
     rows = state.store.list('all')
     total = len(rows)
     from collections import Counter
     c = Counter(r.category for r in rows)
-    lines = [f"总数: {total}"] + [f"{k}: {v}" for k,v in c.most_common()]
-    return '\n'.join(lines)
+    lines = [f"总数: {total}"] + [f"{k}: {v}" for k, v in c.most_common()]
+    console.print(Panel('\n'.join(lines), title='统计'))
 
-def interactive_menu():
-    console.clear()
-    console.print(Panel("[bold cyan]Lista 交互模式[/bold cyan]\n请选择操作 (输入编号)"))
-    while True:
-        console.print(Panel(_stats_panel(), title='统计', expand=False))
-        console.print("[bold yellow]1[/bold yellow]. 扫描(剪贴板路径) 添加/更新 -> 指定分类\n"
-                      "[bold yellow]2[/bold yellow]. 扫描(手动输入路径)\n"
-                      "[bold yellow]3[/bold yellow]. 查看分类列表\n"
-                      "[bold yellow]4[/bold yellow]. 搜索\n"
-                      "[bold yellow]5[/bold yellow]. 添加手动条目\n"
-                      "[bold yellow]6[/bold yellow]. 修改分类\n"
-                      "[bold yellow]7[/bold yellow]. 删除条目\n"
-                      "[bold yellow]8[/bold yellow]. 导出分类\n"
-                      "[bold yellow]9[/bold yellow]. 刷新统计\n"
-                      "[bold yellow]0[/bold yellow]. 退出")
-        choice = Prompt.ask("选择", choices=[str(i) for i in range(0,10)], default='9')
-        try:
-            if choice == '0':
-                break
-            elif choice == '1':
-                cat = Prompt.ask('分类', default='auto')
-                clip = pyperclip.paste().strip()
-                path = Path(clip)
-                if not path.exists():
-                    console.print('[red]剪贴板路径不存在[/red]')
-                else:
-                    added = state.service.scan_folder(path, cat)
-                    console.print(f'[green]完成: {added} 条[/green]')
-            elif choice == '2':
-                p = Prompt.ask('输入路径', default=str(state.base_dir))
-                cat = Prompt.ask('分类', default='auto')
-                added = state.service.scan_folder(Path(p), cat)
-                console.print(f'[green]完成: {added} 条[/green]')
-            elif choice == '3':
-                cat = Prompt.ask('分类(all/auto/white/black/自定义)', default='all')
-                fmt = Prompt.ask('格式(table/names/json)', choices=['table','names','json'], default='table')
-                rows = state.store.list(cat)
-                if fmt == 'table':
-                    table = Table(title=f'分类: {cat}')
-                    table.add_column('Folder'); table.add_column('Category'); table.add_column('Names')
-                    for r in rows:
-                        table.add_row(r.folder, r.category, ','.join(r.names))
-                    console.print(table)
-                elif fmt == 'names':
-                    names = sorted({n for r in rows for n in r.names})
-                    console.print('\n'.join(names))
-                else:
-                    console.print(json.dumps([r.to_dict() for r in rows], ensure_ascii=False, indent=2))
-                if Confirm.ask('复制到剪贴板?', default=False):
-                    if fmt == 'table':
-                        # fallback names copy
-                        names = sorted({n for r in rows for n in r.names})
-                        pyperclip.copy('\n'.join(names))
-                    else:
-                        # need text variable reuse
-                        pass
-                    console.print('[green]已复制[/green]')
-            elif choice == '4':
-                kw = Prompt.ask('关键字')
-                rows = state.store.search(kw)
-                table = Table(title=f'搜索: {kw} ({len(rows)})')
-                table.add_column('Folder'); table.add_column('Category'); table.add_column('Names')
-                for r in rows:
-                    table.add_row(r.folder, r.category, ','.join(r.names))
-                console.print(table)
-            elif choice == '5':
-                folder = Prompt.ask('Folder(含中括号)')
-                cat = Prompt.ask('分类', default='auto')
-                names_raw = Prompt.ask('名称(逗号/空格分隔)')
-                parts = [p.strip() for p in names_raw.replace('，',',').replace(',', ' ').split() if p.strip()]
-                state.service.add_manual(folder, parts, cat)
-                console.print('[green]OK[/green]')
-            elif choice == '6':
-                target = Prompt.ask('名称或Folder')
-                cat = Prompt.ask('新分类')
-                n = state.service.set_category(target, cat)
-                console.print(f'[green]更新 {n} 条[/green]')
-            elif choice == '7':
-                target = Prompt.ask('名称或Folder')
-                if Confirm.ask('确认删除?', default=False):
-                    n = state.store.remove(target)
-                    console.print(f'[red]删除 {n} 条[/red]')
-            elif choice == '8':
-                cat = Prompt.ask('分类(导出)', default='all')
-                out = Prompt.ask('输出文件名', default=f'export_{cat}.json')
-                state.store.export(cat, Path(out))
-                console.print('[green]已导出[/green]')
-            elif choice == '9':
-                # refresh just continues
-                pass
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            console.print(f'[red]错误: {e}[/red]')
+@app.command('output')
+def output(
+    category: str = typer.Option('all', '--category', '-g', help='分类(用于 list 模式)'),
+    keyword: str = typer.Option('', '--keyword', '-k', help='搜索关键字(提供则执行 search)'),
+    format: str = typer.Option('names', '--format', '-F', help='table|names|json'),
+    out: Path = typer.Option(None, '--out', '-o', help='输出 JSON 文件路径'),
+    overwrite: bool = typer.Option(True, '--overwrite/--no-overwrite', help='允许覆盖已存在文件'),
+    copy: bool = typer.Option(False, '--copy', help='复制输出文本到剪贴板')
+):
+    """统一输出: 终端展示同时写入 JSON 文件。keyword 提供则执行搜索，否则按分类列出。"""
+    if keyword:
+        rows = state.store.search(keyword)
+        title = f'搜索: {keyword}'
+    else:
+        rows = state.store.list(category)
+        title = f'分类: {category}'
 
-@app.command('stats')
-def stats():
-    console.print(Panel(_stats_panel(), title='统计'))
+    json_data = [r.to_dict() for r in rows]
+    output_text = ''
+    if format == 'json':
+        output_text = json.dumps(json_data, ensure_ascii=False, indent=2)
+        console.print(Panel(output_text, title=title))
+    elif format == 'names':
+        names = sorted({n for r in rows for n in r.names})
+        output_text = '\n'.join(names)
+        console.print(output_text)
+        json_data = names  # 简化结构
+    else:  # table
+        table = Table(title=f'{title} ({len(rows)})')
+        table.add_column('Folder', style='cyan', overflow='fold')
+        table.add_column('Category', style='magenta')
+        table.add_column('Names', style='green')
+        for r in rows:
+            table.add_row(r.folder, r.category, ','.join(r.names))
+        console.print(table)
+        # table 模式下，JSON 仍输出完整结构，剪贴板复制 names 列
+        output_text = '\n'.join(sorted({n for r in rows for n in r.names}))
+
+    if copy and output_text:
+        pyperclip.copy(output_text)
+        console.print('[green]已复制到剪贴板[/green]')
+
+    if out is None:
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        base = 'search' if keyword else f'list_{category}'
+        out = Path(f'{base}_{format}_{ts}.json')
+    if out.exists() and not overwrite:
+        raise typer.BadParameter(f'文件已存在: {out}')
+    out.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding='utf-8')
+    console.print(f'[green]已写出 JSON -> {out}[/green]')
 
 def main_entry():
     """脚本入口: 无参数 -> Rich 菜单交互；有参数 -> Typer CLI"""
     import sys
     if len(sys.argv) == 1:
         bootstrap()
-        interactive_menu()
+        interactive_menu(state, console)
     else:
         app()
 
