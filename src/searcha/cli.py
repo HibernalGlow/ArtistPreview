@@ -14,10 +14,10 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 import re
 
-app = typer.Typer(add_completion=False, help="搜索辅助工具：支持管道关键词 / 剪贴板路径 / 交互式 Rich")
+app = typer.Typer(add_completion=False, help="简化搜索工具：支持黑名单文件 / -c 剪贴板路径 / 可选文件名匹配")
 console = Console()
 
-DEFAULT_EXTS = [".jpg", ".png", ".jpeg", ".gif", ".webp", ".txt", ".md", ".json", ".zip", ".rar", ".7z"]
+DEFAULT_EXTS = [".jpg", ".png", ".jpeg", ".gif", ".webp", ".zip", ".rar", ".7z"]
 
 
 def detect_piped_input() -> str | None:
@@ -116,120 +116,130 @@ def present_results(rows: list[str], keyword: str, as_table: bool, only_files: b
             console.print(r)
 
 
+DEFAULT_KEYWORDS_FILENAME = "lista_black_names.txt"
+
 @app.command("search")
 def search(
-    keyword: str = typer.Argument(None, help="关键词 (可通过管道输入覆盖)"),
-    path: Path = typer.Option(None, "--path", "-p", help="搜索根路径，缺省尝试剪贴板路径或当前目录"),
-    files: bool = typer.Option(True, "--files/--lines", help="仅列出匹配文件 (或列出含行内容)"),
-    icase: bool = typer.Option(True, "--icase/--no-icase", help="忽略大小写"),
-    table: bool = typer.Option(True, "--table/--no-table", help="表格展示"),
-    glob: list[str] = typer.Option(None, "--glob", help="传给 ripgrep 的 -g 通配 (可多次)"),
-    exts: str = typer.Option('', "--exts", help="备用 Python 搜索时限制扩展(逗号分隔)"),
-    copy: bool = typer.Option(False, "--copy", help="复制结果路径到剪贴板"),
-    json_out: Path = typer.Option(None, "--json-out", help="写出 JSON 文件"),
-    limit: int = typer.Option(0, "--limit", help="限制展示条数 (0 不限制)"),
-    pipe: bool = typer.Option(False, "--pipe", help="强制从标准输入读取多行关键词"),
-    keywords_file: Path = typer.Option(None, "--keywords-file", help="从文件读取多行关键词 (优先级最高)")
+    keyword: str = typer.Argument(None, help="单一关键词(可留空: 自动用黑名单文件)"),
+    path: Path = typer.Option(None, "--path", "-p", help="搜索根路径(缺省尝试剪贴板->当前目录)"),
+    clip: bool = typer.Option(False, "--clip", "-c", help="强制使用剪贴板路径作为根"),
+    include_name: bool = typer.Option(True, "--include-name/--no-include-name", help="按文件名子串匹配"),
+    content: bool = typer.Option(False, "--content/--no-content", help="是否扫描文本/小文件内容 (默认不扫描, 仅文件名)"),
+    copy: bool = typer.Option(False, "--copy", help="复制结果绝对路径列表到剪贴板"),
+    archives_only: bool = typer.Option(True, "--archives-only/--all-files", help="默认只匹配压缩包(.zip/.rar/.7z); 关闭以匹配所有文件"),
 ):
-    piped = None
-    if keywords_file:
-        if not keywords_file.exists():
-            raise typer.BadParameter(f"关键词文件不存在: {keywords_file}")
-        piped = keywords_file.read_text(encoding='utf-8', errors='ignore')
-    else:
-        piped = detect_piped_input() if not pipe else sys.stdin.read()
-    multi_keywords: list[str] = []
-    display_keyword = ''
-    if piped:
-        # 多行 -> 多关键词 OR
-        parts = [p.strip() for p in piped.replace('\r','').split('\n') if p.strip()]
-        if len(parts) > 1:
-            multi_keywords = parts
-        elif parts:
-            keyword = parts[0]
+    # 关键词集合: keyword + 默认黑名单文件行
+    keywords: list[str] = []
     if keyword:
-        display_keyword = keyword
-    if multi_keywords:
-        display_keyword = '|'.join(multi_keywords)
-    if not (keyword or multi_keywords):
-        raise typer.BadParameter("缺少关键词 (参数或管道)")
+        keywords.append(keyword.strip())
+    kw_file = Path.cwd() / DEFAULT_KEYWORDS_FILENAME
+    if kw_file.exists():
+        lines = [l.strip() for l in kw_file.read_text(encoding='utf-8', errors='ignore').splitlines() if l.strip()]
+        for l in lines:
+            if l not in keywords:
+                keywords.append(l)
+    if not keywords:
+        raise typer.BadParameter("没有可用关键词 (参数为空且缺少 lista_black_names.txt)")
 
+    # 路径确定
+    if clip:
+        clip_path = pyperclip.paste().strip()
+        if clip_path and Path(clip_path).exists():
+            path = Path(clip_path)
+        else:
+            raise typer.BadParameter("剪贴板路径无效")
     if path is None:
-        clip = pyperclip.paste().strip()
-        if clip and Path(clip).exists():
-            path = Path(clip)
+        clip_path = pyperclip.paste().strip()
+        if clip_path and Path(clip_path).exists():
+            path = Path(clip_path)
         else:
             path = Path.cwd()
-
     if not path.exists():
         raise typer.BadParameter(f"路径不存在: {path}")
 
-    # 优先 ripgrep
-    lines: list[str]
-    rg_available = shutil.which('rg') is not None
-    search_exts = [e.strip().lower() for e in exts.split(',') if e.strip()] or DEFAULT_EXTS
-    if rg_available:
-        if multi_keywords:
-            # 组建 | 正则，转义每个关键词
-            pattern = '(' + '|'.join(re.escape(k) for k in multi_keywords) + ')'
-        else:
-            pattern = keyword
-        cmd = build_ripgrep_command(pattern, path, files, icase, glob)
+    # 直接文件名匹配; 可选内容匹配(需 --content)
+    lowered = [k.lower() for k in keywords]
+    results: list[str] = []
+    archive_exts = {'.zip', '.rar', '.7z'}
+    for p in path.rglob('*'):
         try:
-            lines = run_ripgrep(cmd)
+            if not p.is_file():
+                continue
+            suffix = p.suffix.lower()
+            if archives_only and suffix not in archive_exts:
+                # 非归档文件：仅当需要内容扫描且开启 content 时才考虑 (例如某些文本 json)
+                if not (content and (suffix in {'.txt', '.md', '.json'})):
+                    continue
+            name_l = p.name.lower()
+            name_hit = include_name and any(k in name_l for k in lowered)
+            if name_hit:
+                results.append(str(p))
+                continue
+            if content and (p.suffix.lower() in {'.txt', '.md', '.json'} or p.stat().st_size < 512 * 1024):
+                try:
+                    with p.open('r', encoding='utf-8', errors='ignore') as fh:
+                        for line in fh:
+                            llow = line.lower()
+                            if any(k in llow for k in lowered):
+                                results.append(str(p))
+                                break
+                except Exception:
+                    pass
+        except Exception:
+            continue
+
+    # 去重 & 输出
+    dedup = []
+    seen = set()
+    for r in results:
+        if r not in seen:
+            dedup.append(r); seen.add(r)
+    for r in dedup:
+        console.print(f'"{r}"')
+    console.print(f"[bold cyan]共 {len(dedup)} 条[/bold cyan]")
+    if copy and dedup:
+        try:
+            pyperclip.copy("\n".join(dedup))
+            console.print("[green]已复制到剪贴板[/green]")
         except Exception as e:
-            console.print(f"[red]ripgrep 执行失败, fallback Python: {e}[/red]")
-            lines = python_fallback_search(multi_keywords or [keyword], path, search_exts, files)
-    else:
-        lines = python_fallback_search(multi_keywords or [keyword], path, search_exts, files)
-
-    if limit > 0:
-        lines = lines[:limit]
-
-    present_results(lines, display_keyword, table, files)
-
-    if copy and lines:
-        to_copy = '\n'.join(lines if not files else sorted(set(lines)))
-        pyperclip.copy(to_copy)
-        console.print('[green]已复制[/green]')
-
-    if json_out:
-        json_out.write_text(json.dumps(lines, ensure_ascii=False, indent=2), encoding='utf-8')
-        console.print(f'[green]JSON -> {json_out}[/green]')
+            console.print(f"[red]复制失败: {e}[/red]")
 
 
 @app.command('interactive')
 def interactive():
-    """交互式模式：循环输入关键词搜索 (回车退出)"""
+    """极简交互: 回车退出, :c 刷新根路径"""
     base = None
-    clip = pyperclip.paste().strip()
-    if clip and Path(clip).exists():
-        base = Path(clip)
+    clip_text = pyperclip.paste().strip()
+    if clip_text and Path(clip_text).exists():
+        base = Path(clip_text)
     while True:
-        kw = Prompt.ask('关键词(回车退出)', default='')
+        kw = Prompt.ask('关键词(:c刷新路径, 回车退出)', default='')
         if not kw:
             break
-        search.callback(kw, base or Path.cwd())  # type: ignore
+        if kw == ':c':
+            clip_new = pyperclip.paste().strip()
+            if clip_new and Path(clip_new).exists():
+                base = Path(clip_new)
+                console.print(f'[cyan]根路径 -> {base}[/cyan]')
+            else:
+                console.print('[red]无效剪贴板路径[/red]')
+            continue
+    search(kw, base or Path.cwd())
 
 
 def main_entry():
     piped = detect_piped_input()
+    # 无参数 -> 交互 / 管道单次
     if len(sys.argv) == 1:
-        if piped:  # 直接执行一次搜索
+        if piped:
             clip = pyperclip.paste().strip()
             root = Path(clip) if clip and Path(clip).exists() else Path.cwd()
-            search.callback(piped, root)  # type: ignore
+            # 直接使用管道内容作为关键词，保持文件黑名单追加逻辑
+            search(piped, root)
             return
-        # 进入交互: 先确定路径
-        clip = pyperclip.paste().strip()
-        root = Path(clip) if clip and Path(clip).exists() else Path.cwd()
-        console.print(Panel(f"[bold cyan]searcha 交互模式[/bold cyan]\n根路径: {root}"))
-        while True:
-            kw = Prompt.ask('关键词(回车退出)', default='')
-            if not kw:
-                break
-            search.callback(kw, root)  # type: ignore
+        interactive()
         return
+    # 有参数 -> 正常 Typer 解析
     app()
 
 if __name__ == '__main__':
