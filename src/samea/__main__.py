@@ -196,31 +196,71 @@ def preprocess_keywords(keywords: Set[str]) -> Set[str]:
 # 预处理黑名单关键词
 _BLACKLIST_KEYWORDS_FULL = preprocess_keywords(BLACKLIST_KEYWORDS)
 
-def is_artist_name_blacklisted(name: str) -> bool:
-    """检查画师名是否包含黑名单关键词"""
+def is_explicit_blacklisted(name: str) -> bool:
+    """显式黑名单判断（不含启发式规则）。
+    仅依据：空、配置的正则、关键词集合。"""
     name_lower = name.lower().strip()
-    
-    # 跳过空字符串
     if not name_lower:
         return True
-        
-    # 跳过纯数字
+    # 配置正则
+    for pattern in REGEX_PATTERNS:
+        try:
+            if re.match(pattern, name_lower):
+                return True
+        except re.error:
+            # 忽略无效正则
+            continue
+        # 仅当黑名单词作为整体或明显子词边界匹配时才过滤，避免 'laika' 被误杀如果某黑名单包含部分片段
+        for keyword in _BLACKLIST_KEYWORDS_FULL:
+            if not keyword:
+                continue
+            if name_lower == keyword:
+                return True
+            if keyword in name_lower:
+                # 若关键词含 CJK（宽泛判断：任一字符在基本多文种之外或 in \u4e00-\u9fff），直接视为命中
+                if any('\u4e00' <= ch <= '\u9fff' or ord(ch) > 0x3000 for ch in keyword):
+                    # 单字 CJK（如 “汉” “漢”）只在完全相等时过滤，避免误杀含此字的正常名字
+                    if len(keyword) == 1:
+                        if name_lower == keyword:
+                            return True
+                    else:
+                        return True
+                # ASCII 关键词做边界检查，避免误伤
+                idx = name_lower.find(keyword)
+                before_ok = (idx == 0) or (not name_lower[idx-1].isalnum())
+                after_pos = idx + len(keyword)
+                after_ok = (after_pos == len(name_lower)) or (not name_lower[after_pos].isalnum())
+                if before_ok and after_ok:
+                    return True
+    return False
+
+def is_heuristically_invalid(name: str) -> bool:
+    """更窄的启发式过滤：仅拒绝明显无意义 token。
+    规则：
+      1) 纯数字 (避免年份/日期)
+      2) 长度 <=2 的纯字母/数字 (a, b1, cg 之类交给黑名单; 这里只做长度限制)
+      3) 特定模式: v\d+, vol\d+, ch\d+, ep\d+ (早期/章节号)
+    其余放行，避免误杀 'Laika', 'Caisan', 'kaim' 等。
+    """
+    name_lower = name.lower().strip()
+    if not name_lower:
+        return True
     if name_lower.isdigit():
         return True
-        
-    # 检查正则模式
-    for pattern in REGEX_PATTERNS:
-        if re.match(pattern, name_lower):
-            return True
-        
-    # 跳过数字字母混合的短标记
-    if re.match(r'^[0-9a-zA-Z]{1,6}$', name_lower):
+    if re.fullmatch(r'[0-9a-zA-Z]{1,2}', name_lower):
         return True
-        
-    # 跳过黑名单关键词
-    if any(keyword in name_lower for keyword in _BLACKLIST_KEYWORDS_FULL):
+    if re.fullmatch(r'(?:v|vol|ch|ep)\d{1,3}', name_lower):
         return True
-        
+    return False
+
+def is_artist_name_blacklisted(name: str, *, allow_heuristic: bool = True) -> bool:
+    """综合判断。
+    allow_heuristic=True 时：显式 + 启发式 都过滤。
+    allow_heuristic=False 时：仅使用显式黑名单（用于回退阶段放宽限制）。"""
+    if is_explicit_blacklisted(name):
+        return True
+    if allow_heuristic and is_heuristically_invalid(name):
+        return True
     return False
 
 def find_balanced_brackets(text: str) -> List[Tuple[int, int, str]]:
@@ -318,21 +358,38 @@ def extract_artist_info(filename: str) -> List[Tuple[str, str]]:
     if artist_infos:
         return artist_infos
     
-    # 方法3: 处理独立的方括号内容
+    # 方法3: 处理独立的方括号内容（正常阶段）
     seen = set()
     for content in bracket_contents:
-        # 避免重复处理
         if content in seen:
             continue
         seen.add(content)
-        
-        # 检查是否为画师名
         if not is_artist_name_blacklisted(content):
             artist_infos.append(('', content))
             logger.debug(f"✅ 提取到画师信息 (格式3): [{content}]")
         else:
-            logger.debug(f"⏭️ 跳过黑名单内容 (格式3): [{content}]")
-            
+            logger.debug(f"⏭️ 跳过内容 (格式3 初始阶段): [{content}]")
+
+    # 回退阶段：如果仍未找到结果，尝试放宽启发式限制
+    if not artist_infos and bracket_contents:
+        # 情况1：只有一个方括号内容 -> 只要不在显式黑名单中就接受
+        if len(bracket_contents) == 1:
+            only_content = bracket_contents[0]
+            # 单一内容：放宽启发式。如果是纯数字或短标签也允许；若仅被正则匹配阻挡也尝试放行。
+            if not is_explicit_blacklisted(only_content) or only_content.isdigit():
+                artist_infos.append(('', only_content))
+                logger.debug(f"🔄 回退接受单一方括号内容(放宽启发式/数值豁免): [{only_content}]")
+        else:
+            # 情况2：多项内容，选择首个不在显式黑名单中的（忽略启发式）
+            for content in bracket_contents:
+                if not is_explicit_blacklisted(content):
+                    artist_infos.append(('', content))
+                    logger.debug(f"🔄 回退放宽启发式接受: [{content}]")
+                    break
+            # 如果依然找不到，保持空（不要再强行兜底），避免把纯噪声如 DL版 当成画师。
+
+    # 移除“终极兜底”以避免过度放宽；保持严格策略。
+
     return artist_infos
 
 def find_common_artists(files: List[str], min_occurrences: int = 2) -> Dict[str, List[str]]:
@@ -368,7 +425,7 @@ def clean_path(path: str) -> str:
     """去除路径前后空格和单双引号，并标准化分隔符"""
     return os.path.normpath(path.strip().strip('"').strip("'"))
 
-def process_directory(directory: str, ignore_blacklist: bool = False, min_occurrences: int = 2, centralize: bool = False) -> None:
+def process_directory(directory: str, ignore_blacklist: bool = False, min_occurrences: int = 2, centralize: bool = False, debug: bool = False) -> None:
     """处理单个目录，并保存处理数据到json
 
     Args:
@@ -420,6 +477,15 @@ def process_directory(directory: str, ignore_blacklist: bool = False, min_occurr
         logger.warning(f"⚠️ 目录 {directory} 中未找到压缩文件")
         return
     logger.info("🔍 正在分析画师信息...")
+    # 可选调试：逐文件展示解析
+    if debug:
+        for f in all_files:
+            infos = extract_artist_info(os.path.basename(f))
+            if infos:
+                logger.debug(f"🐛DEBUG 提取 {f} => {infos}")
+            else:
+                logger.debug(f"🐛DEBUG 提取 {f} => 无有效画师信息")
+
     artist_groups = find_common_artists(all_files, min_occurrences=min_occurrences)
     if not artist_groups:
         logger.warning("⚠️ 未找到符合条件的画师")
@@ -610,6 +676,7 @@ def main():
         parser.add_argument('--min-occurrences', type=int, default=1, help='建立画师文件夹所需的最小文件数（如1则单文件也建文件夹）')
         parser.add_argument('--manage-blacklist', action='store_true', help='管理黑名单')
         parser.add_argument('--centralize', action='store_true', help='集中收纳到[00画师分类]目录 (默认否)')
+        parser.add_argument('--debug', action='store_true', help='调试模式：输出每个文件的解析结果')
         args = parser.parse_args()
 
         if args.manage_blacklist:
@@ -647,6 +714,7 @@ def main():
             args.min_occurrences = int(min_occurrences)
         except Exception:
             args.min_occurrences = 2
+        args.debug = False
     
     # 处理路径
     paths = []
@@ -677,7 +745,7 @@ def main():
     
     for path in valid_paths:
         logger.info(f"🚀 开始处理目录: {path}")
-        process_directory(path, ignore_blacklist=args.ignore_blacklist, min_occurrences=args.min_occurrences, centralize=getattr(args, 'centralize', False))
+        process_directory(path, ignore_blacklist=args.ignore_blacklist, min_occurrences=args.min_occurrences, centralize=getattr(args, 'centralize', False), debug=getattr(args, 'debug', False))
         logger.info(f"✨ 目录处理完成: {path}")
 
 if __name__ == "__main__":
