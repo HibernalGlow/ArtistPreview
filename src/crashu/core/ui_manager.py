@@ -147,17 +147,28 @@ class UIManager:
         table.add_column("文件夹路径", style="blue")
         table.add_column("目标匹配", style="magenta")
         table.add_column("相似度", justify="right", style=self.config.colors["warning"])
-        
+        table.add_column("匹配说明", style=self.config.colors["info"])
+
         if auto_get:
             table.add_column("目标完整路径", style="blue")
-        
+
         for i, folder in enumerate(similar_folders, 1):
+            # 匹配维度与命中名
+            match_dim = folder.get("match_dim")
+            match_src = folder.get("match_src")
+            match_tgt = folder.get("match_tgt")
+            if match_dim and match_src and match_tgt:
+                match_desc = f"{match_dim}: {match_src} -> {match_tgt}"
+            else:
+                match_desc = ""
+
             row = [
                 str(i),
                 folder["name"],
                 folder["path"],
                 folder["target"],
-                f"{folder['similarity']:.2f}"
+                f"{folder['similarity']:.2f}",
+                match_desc,
             ]
             
             if auto_get:

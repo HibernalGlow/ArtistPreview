@@ -6,6 +6,7 @@ import os
 import difflib
 from rich.console import Console
 from rich.progress import Progress
+from lista.core.service import extract_names_from_folder_name
 
 console = Console()
 
@@ -115,24 +116,63 @@ class FolderManager:
                     ]
                     
                     for subfolder in subfolders:
+                        subfolder_path = os.path.join(source_path, subfolder)
+                        # 先准备源/目标解析得到的名字（作为回退匹配用）
+                        src_names = extract_names_from_folder_name(subfolder)
                         for idx, target_name in enumerate(target_folder_names):
-                            similarity = FolderManager.get_similarity(
-                                subfolder.lower(), 
-                                target_name.lower()
+                            # 1) 优先：完整文件夹名直接相似度
+                            best_similarity = FolderManager.get_similarity(
+                                subfolder.lower(),
+                                target_name.lower(),
                             )
-                            
-                            if similarity >= similarity_threshold:
+                            best_kind = "full/full"
+                            best_src_hit = subfolder
+                            best_tgt_hit = target_name
+                            matched = best_similarity >= similarity_threshold
+
+                            # 2) 回退：使用名字列表交叉比对（源解析名 vs 目标完整名；以及若目标名也可解析则互相比对）
+                            if not matched:
+                                tgt_names = extract_names_from_folder_name(target_name)
+                                # 源解析名与目标完整名
+                                for s in src_names:
+                                    sim = FolderManager.get_similarity(s.lower(), target_name.lower())
+                                    if sim > best_similarity:
+                                        best_similarity = sim
+                                        best_kind = "alias/full"
+                                        best_src_hit = s
+                                        best_tgt_hit = target_name
+                                # 目标解析名与源完整名
+                                for t in tgt_names:
+                                    sim = FolderManager.get_similarity(subfolder.lower(), t.lower())
+                                    if sim > best_similarity:
+                                        best_similarity = sim
+                                        best_kind = "full/alias"
+                                        best_src_hit = subfolder
+                                        best_tgt_hit = t
+                                # 源解析名与目标解析名逐两比较
+                                for s in src_names:
+                                    for t in tgt_names:
+                                        sim = FolderManager.get_similarity(s.lower(), t.lower())
+                                        if sim > best_similarity:
+                                            best_similarity = sim
+                                            best_kind = "alias/alias"
+                                            best_src_hit = s
+                                            best_tgt_hit = t
+                                matched = best_similarity >= similarity_threshold
+
+                            if matched:
                                 folder_info = {
                                     "name": subfolder,
-                                    "path": os.path.join(source_path, subfolder),
+                                    "path": subfolder_path,
                                     "target": target_name,
-                                    "similarity": similarity
+                                    "similarity": best_similarity,
+                                    # 匹配元数据
+                                    "match_dim": best_kind,
+                                    "match_src": best_src_hit,
+                                    "match_tgt": best_tgt_hit,
                                 }
-                                
-                                # 如果自动获取，补充完整路径
                                 if auto_get and target_folder_fullpaths:
                                     folder_info["target_fullpath"] = target_folder_fullpaths[idx]
-                                
                                 similar_folders.append(folder_info)
                                 
                 except Exception as e:
