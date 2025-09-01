@@ -103,6 +103,8 @@ def load_seriex_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     cfg: Dict[str, Any] = {
         "formats": sorted(_DEFAULT_SUPPORTED_EXTS),
         "archive_formats": sorted(_DEFAULT_ARCHIVE_EXTS),
+    "prefix": "[#s]",
+    "add_prefix": True,
         "check_integrity": True,
     }
 
@@ -166,6 +168,14 @@ def load_seriex_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         cintegrity = node.get("check_integrity") if isinstance(node, dict) else None
         if isinstance(cintegrity, bool):
             cfg["check_integrity"] = cintegrity
+
+        cprefix = node.get("prefix") if isinstance(node, dict) else None
+        if isinstance(cprefix, str):
+            cfg["prefix"] = cprefix
+
+        addp = node.get("add_prefix") if isinstance(node, dict) else None
+        if isinstance(addp, bool):
+            cfg["add_prefix"] = addp
 
     # 兜底保证集合正确
     fmts_set = _normalize_exts(cfg.get("formats", [])) or set(_DEFAULT_SUPPORTED_EXTS)

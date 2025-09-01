@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.tree import Tree
 
 from .extractor import seriex
 
@@ -31,6 +32,8 @@ def extract(
     paths: List[str] = typer.Argument(None, help="要处理的路径列表"),
     clipboard: bool = typer.Option(False, "--clipboard", "-c", help="从剪贴板读取路径"),
     config: Optional[str] = typer.Option(None, "--config", "-C", help="TOML 配置文件路径（可指定支持的格式，默认含 mp4/nov/zip 与常见压缩包）"),
+    prefix: Optional[str] = typer.Option(None, "--prefix", help="自定义系列前缀（覆盖配置）"),
+    add_prefix: Optional[bool] = typer.Option(None, "--add-prefix/--no-add-prefix", help="是否为新建系列文件夹添加前缀（可覆盖配置）"),
     similarity: float = typer.Option(75.0, help="设置基本相似度阈值(0-100)，默认75"),
     ratio: float = typer.Option(75.0, help="设置完全匹配阈值(0-100)，默认75"),
     partial: float = typer.Option(85.0, help="设置部分匹配阈值(0-100)，默认85"),
@@ -71,7 +74,10 @@ def extract(
     }
     
     # 创建提取器
-    extractor = seriex(similarity_config, config_path=config)
+    extractor = seriex(similarity_config, config_path=config, add_prefix=add_prefix)
+    # 覆盖前缀（运行时）
+    if prefix is not None:
+        extractor.config["prefix"] = prefix
     
     # 处理每个路径
     success_count = 0
@@ -82,6 +88,16 @@ def extract(
                 typer.echo(f"\n📂 处理目录: {path}")
                 if extractor.process_directory(path):
                     success_count += 1
+                    # 输出汇总树
+                    if extractor.last_summary:
+                        tree = Tree(f"结果: {path}")
+                        for d, groups in extractor.last_summary.items():
+                            dnode = tree.add(d)
+                            for folder, files in groups.items():
+                                fnode = dnode.add(f"{folder}")
+                                for fn in files:
+                                    fnode.add(fn)
+                        console.print(tree)
             else:
                 typer.echo(f"⚠️ 跳过文件 {path}，只能处理目录")
         else:
@@ -169,9 +185,21 @@ def interactive():
         p = Prompt.ask("请输入 TOML 配置文件路径(留空跳过)").strip()
         if p:
             cfg_path = p
+    # 是否添加前缀
+    add_prefix = None
+    if Confirm.ask("是否为系列文件夹添加前缀?", default=True):
+        add_prefix = True
+    else:
+        add_prefix = False
+    # 可选自定义前缀
+    custom_prefix = None
+    if add_prefix and Confirm.ask("是否自定义前缀?", default=False):
+        custom_prefix = Prompt.ask("请输入前缀（如 [#s]）", default="[#s]")
     
     # 创建提取器
-    extractor = seriex(similarity_config, config_path=cfg_path)
+    extractor = seriex(similarity_config, config_path=cfg_path, add_prefix=add_prefix)
+    if custom_prefix is not None:
+        extractor.config["prefix"] = custom_prefix
     
     # 处理路径
     success_count = 0
@@ -195,6 +223,16 @@ def interactive():
                     if extractor.process_directory(path):
                         success_count += 1
                         console.print(f"[green]✓ 成功处理目录: {path}[/green]")
+                        # 输出汇总树
+                        if extractor.last_summary:
+                            tree = Tree(f"结果: {path}")
+                            for d, groups in extractor.last_summary.items():
+                                dnode = tree.add(d)
+                                for folder, files in groups.items():
+                                    fnode = dnode.add(f"{folder}")
+                                    for fn in files:
+                                        fnode.add(fn)
+                            console.print(tree)
                     else:
                         console.print(f"[yellow]⚠ 处理目录遇到问题: {path}[/yellow]")
                 else:

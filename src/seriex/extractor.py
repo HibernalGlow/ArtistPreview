@@ -525,7 +525,7 @@ def find_series_groups(filenames):
     
     return dict(series_groups)
 
-def update_series_folder_name(old_path):
+def update_series_folder_name(old_path, creation_prefix: str):
     """更新系列文件夹名称为最新标准"""
     try:
         dir_name = os.path.basename(old_path)
@@ -546,17 +546,18 @@ def update_series_folder_name(old_path):
         old_series_name = dir_name[len(prefix_used):]
         # 使用新标准处理系列名
         new_series_name = get_series_key(old_series_name)
-        
+
         if not new_series_name or new_series_name == old_series_name:
             return False
-            
-        # 创建新路径（使用标准系列标记[#s]）
-        new_path = os.path.join(os.path.dirname(old_path), f'[#s]{new_series_name}')
-        
+
+        # 创建新路径（使用配置的系列标记）
+        new_prefix = creation_prefix or ""
+        new_path = os.path.join(os.path.dirname(old_path), f'{new_prefix}{new_series_name}')
+
         # 如果新路径已存在，检查是否为不同路径
         if os.path.exists(new_path) and os.path.abspath(new_path) != os.path.abspath(old_path):
             return False
-            
+
         # 重命名文件夹
         os.rename(old_path, new_path)
         return True
@@ -565,15 +566,16 @@ def update_series_folder_name(old_path):
         logger.error(f"更新系列文件夹名称失败 {old_path}: {str(e)}")
         return False
 
-def update_all_series_folders(directory_path):
+def update_all_series_folders(directory_path, creation_prefix: str):
     """更新目录下所有的系列文件夹名称"""
     try:
         updated_count = 0
         for root, dirs, _ in os.walk(directory_path):
             for dir_name in dirs:
-                if dir_name.startswith('[#s]'):
+                # 任何已知前缀的目录都纳入更新判断
+                if any(dir_name.startswith(pfx) for pfx in SERIES_PREFIXES):
                     full_path = os.path.join(root, dir_name)
-                    if update_series_folder_name(full_path):
+                    if update_series_folder_name(full_path, creation_prefix):
                         updated_count += 1
         
         if updated_count > 0:
@@ -674,9 +676,16 @@ def collect_items_for_series(directory_path, config, category_folders):
                     
     return items
 
-def create_series_folders(directory_path, files):
-    """为同一系列的文件创建文件夹（文件可为压缩包/视频/自定义格式等）。"""
+def create_series_folders(directory_path, files, config, add_prefix: bool | None = None):
+    """为同一系列的文件创建文件夹（文件可为压缩包/视频/自定义格式等）。
+
+    返回值：summary 显示每个目录下创建的系列与移动的文件。
+    { dir_path: { final_folder_name: [file_basename, ...] } }
+    """
     dir_groups = defaultdict(list)
+    summary: dict[str, dict[str, list[str]]] = {}
+    use_prefix = add_prefix if add_prefix is not None else config.get("add_prefix", True)
+    creation_prefix = config.get("prefix", "[#s]") if use_prefix else ""
     # 仅处理实际存在的受支持文件
     files = [f for f in files if os.path.isfile(f)]
 
@@ -711,6 +720,7 @@ def create_series_folders(directory_path, files):
             
             # 创建一个字典来记录每个系列的文件夹路径
             series_folders = {}
+            summary.setdefault(dir_path, {})
             
             # 首先创建所有需要的系列文件夹
             for series_name, files in series_groups.items():
@@ -722,34 +732,41 @@ def create_series_folders(directory_path, files):
                         logger.warning(f"系列 '{series_name}' 只有一个文件，跳过创建文件夹")
                     continue
                 
-                # 添加系列标记（使用标准系列标记[#s]）
-                series_folder = os.path.join(dir_path, f'[#s]{series_name.strip()}')
+                # 添加系列标记（使用配置前缀，或不添加）
+                folder_name = f"{creation_prefix}{series_name.strip()}"
+                series_folder = os.path.join(dir_path, folder_name)
                 if not os.path.exists(series_folder):
                     os.makedirs(series_folder)
-                    logger.info(f"创建系列文件夹: [#s]{series_name}")
+                    logger.info(f"创建系列文件夹: {folder_name}")
                 series_folders[series_name] = series_folder
             
             # 然后移动每个系列的文件
             for series_name, folder_path in series_folders.items():
                 files = series_groups[series_name]
                 logger.info(f"开始移动系列 '{series_name}' 的文件...")
-                
+                moved_list: list[str] = []
                 for file_path in files:
                     target_path = os.path.join(folder_path, os.path.basename(file_path))
                     if not os.path.exists(target_path):
                         shutil.move(file_path, target_path)
                         logger.info(f"  └─ 移动: {os.path.basename(file_path)}")
+                        moved_list.append(os.path.basename(file_path))
                     else:
                         logger.warning(f"文件已存在于系列 '{series_name}': {os.path.basename(file_path)}")
+                # 记录汇总
+                final_folder_name = os.path.basename(folder_path)
+                if moved_list:
+                    summary[dir_path].setdefault(final_folder_name, []).extend(moved_list)
             
-            logger.info("系列提取完成")
+        logger.info("系列提取完成")
         
         logger.info(f"目录处理完成: {dir_path}")
+    return summary
 
 class seriex:
     """系列提取器类，处理系列提取相关操作"""
     
-    def __init__(self, similarity_config=None, config_path: Optional[str] = None):
+    def __init__(self, similarity_config=None, config_path: Optional[str] = None, add_prefix: Optional[bool] = None):
         """初始化系列提取器
         
         Args:
@@ -758,6 +775,17 @@ class seriex:
         self.logger = setup_logger('seriex')
         # 加载格式/行为配置（TOML）
         self.config = load_seriex_config(config_path)
+        # 运行时是否添加系列前缀
+        self.add_prefix = add_prefix if add_prefix is not None else self.config.get("add_prefix", True)
+        # 将配置的创建前缀加入检测集合
+        try:
+            creation_prefix = self.config.get("prefix", "[#s]")
+            if creation_prefix:
+                SERIES_PREFIXES.add(creation_prefix)
+        except Exception:
+            pass
+        # 最近一次运行的汇总
+        self.last_summary: dict[str, dict[str, list[str]]] = {}
         if similarity_config:
             SIMILARITY_CONFIG.update(similarity_config)
         
@@ -775,9 +803,11 @@ class seriex:
                 self.logger.error(f"目录不存在或不是有效目录: {directory_path}")
                 return False
                 
-            # 更新旧的系列文件夹名称
-            self.logger.info(f"检查并更新旧的系列文件夹名称...")
-            update_all_series_folders(directory_path)
+            # 更新旧的系列文件夹名称（仅在启用前缀时进行）
+            if self.add_prefix:
+                self.logger.info(f"检查并更新旧的系列文件夹名称...")
+                creation_prefix = self.config.get("prefix", "[#s]")
+                update_all_series_folders(directory_path, creation_prefix)
             
             # 收集用于系列提取的候选文件
             self.logger.info(f"开始查找可提取系列的文件（按配置扩展名）...")
@@ -789,7 +819,7 @@ class seriex:
             
             # 创建系列文件夹
             self.logger.info(f"在目录及其子文件夹下找到 {len(items)} 个有效文件")
-            create_series_folders(directory_path, items)
+            self.last_summary = create_series_folders(directory_path, items, self.config, add_prefix=self.add_prefix)
             
             self.logger.info(f"目录处理完成: {directory_path}")
             return True

@@ -10,4 +10,10 @@ formats = [
 archive_formats = ["zip", "rar", "7z", "cbz", "cbr"]
 
 # 是否进行归档完整性检测（true 会用 7z t 检测）
-check_integrity = true
+check_integrity = false
+
+# 新建系列文件夹时的标识前缀
+prefix = "[#s]"
+
+# 是否为系列文件夹添加前缀
+add_prefix = true
