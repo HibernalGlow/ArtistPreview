@@ -1,0 +1,294 @@
+"""
+系列提取工具函数模块
+"""
+
+import os
+import re
+import sys
+import logging
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Iterable, Optional, Set, Dict, Any
+
+# TOML 解析器（优先使用内置 tomllib，其次 tomli，若都不可用则置为 None）
+toml = None
+try:  # Python 3.11+
+    import tomllib as toml  # type: ignore
+except Exception:
+    try:
+        import tomli as toml  # type: ignore
+    except Exception:
+        toml = None
+
+# 中文转换（可选依赖，缺失时退化为原样返回）
+try:
+    from hanziconv import HanziConv  # type: ignore
+except Exception:  # pragma: no cover
+    HanziConv = None  # type: ignore
+
+def normalize_chinese(text):
+    """标准化中文文本（统一转换为简体）"""
+    if HanziConv is None:
+        return text
+    return HanziConv.toSimplified(text)
+
+def to_traditional(text):
+    """简体转繁体"""
+    if HanziConv is None:
+        return text
+    return HanziConv.toTraditional(text)
+
+# 设置文件系统编码
+# if sys.platform == 'win32':
+#     try:
+#         import win32api
+#         def win32_path_exists(path):
+#             try:
+#                 win32api.GetFileAttributes(path)
+#                 return True
+#             except:
+#                 print("未安装win32api模块，某些路径可能无法正确处理")
+#                 return os.path.exists(path)
+#     except ImportError:
+#         print("未安装win32api模块，某些路径可能无法正确处理")
+#         win32_path_exists = os.path.exists
+
+#############################################
+# 配置与格式支持
+#############################################
+
+_DEFAULT_SUPPORTED_EXTS: Set[str] = {
+    # 压缩包家族
+    ".zip", ".rar", ".7z", ".cbz", ".cbr",
+    # 视频/其它
+    ".mp4",
+    # 自定义/非通用扩展
+    ".nov",
+}
+
+_DEFAULT_ARCHIVE_EXTS: Set[str] = {
+    ".zip", ".rar", ".7z", ".cbz", ".cbr"
+}
+
+_CACHED_CONF: Optional[Dict[str, Any]] = None
+
+
+def _normalize_exts(exts: Iterable[str]) -> Set[str]:
+    """规范化扩展名集合（转小写并补全前导点）。"""
+    norm: Set[str] = set()
+    for e in exts:
+        e = e.strip().lower()
+        if not e:
+            continue
+        if not e.startswith("."):
+            e = "." + e
+        norm.add(e)
+    return norm
+
+
+def load_seriex_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """加载 seriex 的 TOML 配置。
+
+    优先级：
+    1) 明确的 config_path 指向的 toml 文件
+    2) 工作目录下的 "seriex.toml"
+    3) 工作区或父目录中的 "pyproject.toml" 的 [tool.seriex]
+    4) 内置默认值
+    """
+    global _CACHED_CONF
+    if _CACHED_CONF is not None and config_path is None:
+        return _CACHED_CONF
+
+    cfg: Dict[str, Any] = {
+        "formats": sorted(_DEFAULT_SUPPORTED_EXTS),
+        "archive_formats": sorted(_DEFAULT_ARCHIVE_EXTS),
+        "check_integrity": True,
+    }
+
+    def _try_load_toml(path: str) -> Optional[Dict[str, Any]]:
+        try:
+            if toml is None:
+                return None
+            with open(path, "rb") as f:
+                data = toml.load(f)
+            return data
+        except Exception:
+            return None
+
+    data: Optional[Dict[str, Any]] = None
+    if config_path:
+        data = _try_load_toml(config_path)
+    if data is None:
+        # 包目录下的默认 seri ex.toml（默认优先）
+        pkg_dir = Path(__file__).resolve().parent
+        pkg_toml = pkg_dir / "seriex.toml"
+        if pkg_toml.exists():
+            data = _try_load_toml(str(pkg_toml))
+    if data is None:
+        # 当前工作目录 seri ex.toml
+        cwd_toml = os.path.join(os.getcwd(), "seriex.toml")
+        data = _try_load_toml(cwd_toml)
+    if data is None:
+        # pyproject.toml [tool.seriex]
+        # 遍历从 cwd 向上的若干层寻找 pyproject
+        cur = Path(os.getcwd())
+        for _ in range(5):
+            pp = cur / "pyproject.toml"
+            if pp.exists():
+                project = _try_load_toml(str(pp))
+                if project and isinstance(project, dict):
+                    tool = project.get("tool") or {}
+                    seriex_tool = tool.get("seriex") if isinstance(tool, dict) else None
+                    if isinstance(seriex_tool, dict):
+                        data = {"seriex": seriex_tool}
+                        break
+            if cur.parent == cur:
+                break
+            cur = cur.parent
+
+    if data:
+        # 支持两种结构：
+        # 1) 直接在根：formats = [], archive_formats = []
+        # 2) [seriex] 或 [tool.seriex]
+        node = data
+        if "seriex" in data and isinstance(data["seriex"], dict):
+            node = data["seriex"]
+
+        fmts = node.get("formats") if isinstance(node, dict) else None
+        if isinstance(fmts, list):
+            cfg["formats"] = sorted(_normalize_exts([str(x) for x in fmts]))
+
+        afmts = node.get("archive_formats") if isinstance(node, dict) else None
+        if isinstance(afmts, list):
+            cfg["archive_formats"] = sorted(_normalize_exts([str(x) for x in afmts]))
+
+        cintegrity = node.get("check_integrity") if isinstance(node, dict) else None
+        if isinstance(cintegrity, bool):
+            cfg["check_integrity"] = cintegrity
+
+    # 兜底保证集合正确
+    fmts_set = _normalize_exts(cfg.get("formats", [])) or set(_DEFAULT_SUPPORTED_EXTS)
+    afmts_set = _normalize_exts(cfg.get("archive_formats", [])) or set(_DEFAULT_ARCHIVE_EXTS)
+    # archive 必须是 formats 的子集，否则取交集
+    afmts_set = afmts_set & fmts_set
+
+    cfg["formats"] = sorted(fmts_set)
+    cfg["archive_formats"] = sorted(afmts_set)
+
+    if config_path is None:
+        _CACHED_CONF = cfg
+    return cfg
+
+
+def get_supported_extensions(config: Optional[Dict[str, Any]] = None) -> Set[str]:
+    cfg = config or load_seriex_config()
+    return set(cfg.get("formats", _DEFAULT_SUPPORTED_EXTS))
+
+
+def get_archive_extensions(config: Optional[Dict[str, Any]] = None) -> Set[str]:
+    cfg = config or load_seriex_config()
+    return set(cfg.get("archive_formats", _DEFAULT_ARCHIVE_EXTS))
+
+
+def is_supported_file(path: str, config: Optional[Dict[str, Any]] = None) -> bool:
+    suffix = Path(path).suffix.lower()
+    return suffix in get_supported_extensions(config)
+
+
+def is_archive(path: str, config: Optional[Dict[str, Any]] = None) -> bool:
+    """检查文件是否为支持的压缩包格式（基于配置）。"""
+    return Path(path).suffix.lower() in get_archive_extensions(config)
+
+# @timeout(60)
+def is_archive_corrupted(archive_path):
+    """检查压缩包是否损坏"""
+    try:
+        # 使用7z测试压缩包完整性
+        cmd = ['7z', 't', archive_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=55)
+        return result.returncode != 0
+    except subprocess.TimeoutExpired:
+        raise TimeoutError(f"检查压缩包完整性超时: {archive_path}")
+    except Exception:
+        return True
+
+class TimeoutError(Exception):
+    """超时异常"""
+    pass
+
+def timeout(seconds):
+    """超时装饰器"""
+    def decorator(func):
+        import functools
+        import threading
+        import signal
+        
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            def handler(signum, frame):
+                raise TimeoutError(f"函数执行超时 ({seconds}秒)")
+
+            # 设置信号处理器
+            if sys.platform != 'win32':  # Unix系统使用信号
+                original_handler = signal.signal(signal.SIGALRM, handler)
+                signal.alarm(seconds)
+            else:  # Windows系统使用线程
+                timer = threading.Timer(seconds, lambda: threading._shutdown())
+                timer.start()
+
+            try:
+                result = func(*args, **kwargs)
+            finally:
+                if sys.platform != 'win32':  # Unix系统
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, original_handler)
+                else:  # Windows系统
+                    timer.cancel()
+
+            return result
+        return wrapper
+    return decorator
+
+# 定义系列前缀集合
+SERIES_PREFIXES = {
+    '[#s]',  # 标准系列标记
+    '#',     # 简单系列标记
+}
+
+# 定义系列提取黑名单规则
+SERIES_BLACKLIST_PATTERNS = [
+    r'画集',                # 画集
+    r'fanbox',     # artbook/art book（不区分大小写）
+    r'pixiv',    # artworks/art works（不区分大小写）
+    r'・',          # 插画集（日文）
+    r'杂图合集',           # 插画集（中文）
+    r'01视频',
+    r'02动图',
+    r'作品集',             # 作品集
+    r'01视频',
+    r'02动图',
+    r'损坏压缩包',
+]
+
+def is_series_blacklisted(filename):
+    """检查文件名是否在系列提取黑名单中"""
+    for pattern in SERIES_BLACKLIST_PATTERNS:
+        if re.search(pattern, filename, re.IGNORECASE):
+            return True
+    return False
+
+def setup_logger(name='series_extractor'):
+    """设置日志"""
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+
+    # 避免重复添加 handler
+    if not logger.handlers:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+
+    return logger

@@ -1,0 +1,799 @@
+"""
+系列提取核心功能模块
+"""
+
+import os
+import re
+import shutil
+import logging
+import threading
+from typing import Optional
+import difflib
+from pathlib import Path
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+# 可选依赖：rapidfuzz 与 diff_match_patch（缺失时回退到内置算法）
+try:
+    from rapidfuzz import fuzz, process  # type: ignore
+except Exception:  # pragma: no cover
+    class _FuzzFallback:
+        @staticmethod
+        def ratio(a, b):
+            return int(difflib.SequenceMatcher(None, a, b).ratio() * 100)
+
+        partial_ratio = ratio
+        token_sort_ratio = ratio
+
+    fuzz = _FuzzFallback()  # type: ignore
+    process = None  # type: ignore
+
+try:
+    from diff_match_patch import diff_match_patch  # type: ignore
+except Exception:  # pragma: no cover
+    class diff_match_patch:  # minimal stub
+        pass
+
+from .utils import (
+    normalize_chinese,
+    is_archive,
+    is_supported_file,
+    is_archive_corrupted,
+    is_series_blacklisted,
+    SERIES_PREFIXES,
+    setup_logger,
+    load_seriex_config,
+)
+
+logger = setup_logger('seriex')
+
+# 相似度配置
+SIMILARITY_CONFIG = {
+    'THRESHOLD': 75,  # 基本相似度阈值
+    'LENGTH_DIFF_MAX': 0.3,  # 长度差异最大值
+    'RATIO_THRESHOLD': 75,  # 完全匹配阈值
+    'PARTIAL_THRESHOLD': 85,  # 部分匹配阈值
+    'TOKEN_THRESHOLD': 80,  # 标记匹配阈值
+}
+
+def calculate_similarity(str1, str2):
+    """计算两个字符串的相似度"""
+    # 标准化中文（转换为简体）后再比较
+    str1 = normalize_chinese(str1)
+    str2 = normalize_chinese(str2)
+    
+    ratio = fuzz.ratio(str1.lower(), str2.lower())
+    partial = fuzz.partial_ratio(str1.lower(), str2.lower())
+    token = fuzz.token_sort_ratio(str1.lower(), str2.lower())
+    
+    max_similarity = max(ratio, partial, token)
+    if max_similarity >= SIMILARITY_CONFIG['THRESHOLD']:
+        logger.info(f"相似度: {max_similarity}%")
+    return max_similarity
+
+def is_in_series_folder(file_path):
+    """检查文件是否已经在系列文件夹内"""
+    parent_dir = os.path.dirname(file_path)
+    parent_name = os.path.basename(parent_dir)
+    
+    # 检查是否有系列标记
+    for prefix in SERIES_PREFIXES:
+        if parent_name.startswith(prefix):
+            # 提取系列名称并重新用 get_series_key 处理
+            series_name = parent_name[len(prefix):]  # 去掉前缀
+            parent_key = get_series_key(series_name)
+            file_key = get_series_key(os.path.basename(file_path))
+            return parent_key == file_key
+    
+    # 如果父目录名称是文件名的一部分（去除数字和括号后），则认为已在系列文件夹内
+    parent_key = get_series_key(parent_name)
+    file_key = get_series_key(os.path.basename(file_path))
+    
+    if parent_key and parent_key in file_key:
+        return True
+    return False
+
+def is_similar_to_existing_folder(dir_path, series_name):
+    """检查是否存在相似的文件夹名称"""
+    try:
+        existing_folders = [d for d in os.listdir(dir_path) 
+                          if os.path.isdir(os.path.join(dir_path, d))]
+    except Exception as e:
+        logger.error(f"读取目录失败: {dir_path}")
+        return False
+        
+    series_key = get_series_key(series_name)
+    
+    for folder in existing_folders:
+        # 检查所有支持的系列前缀
+        is_series_folder = False
+        folder_name = folder
+        for prefix in SERIES_PREFIXES:
+            if folder.startswith(prefix):
+                # 对已有的系列文件夹使用相同的处理标准
+                folder_name = folder[len(prefix):]  # 去掉前缀
+                is_series_folder = True
+                break
+        
+        if is_series_folder:
+            folder_key = get_series_key(folder_name)
+            
+            # 如果系列键完全相同，直接返回True
+            if series_key == folder_key:
+                return True
+            
+            # 否则计算相似度
+            similarity = calculate_similarity(series_key, folder_key)
+            if similarity >= SIMILARITY_CONFIG['THRESHOLD']:
+                return True
+        else:
+            # 对非系列文件夹使用原有的相似度检查
+            similarity = calculate_similarity(series_name, folder)
+            if similarity >= SIMILARITY_CONFIG['THRESHOLD']:
+                return True
+    return False
+
+def get_base_filename(filename):
+    """获取去除所有标签后的基本文件名"""
+    # 去掉扩展名
+    name = os.path.splitext(filename)[0]
+    
+    # 去除所有方括号及其内容
+    name = re.sub(r'\[[^\]]*\]', '', name)
+    # 去除所有圆括号及其内容
+    name = re.sub(r'\([^)]*\)', '', name)
+    # 去除所有空格和标点
+    name = re.sub(r'[\s!！?？_~～]+', '', name)
+    # 标准化中文（转换为简体）
+    name = normalize_chinese(name)
+    
+    return name
+
+def is_essentially_same_file(file1, file2):
+    """检查两个文件是否本质上是同一个文件（只是标签不同）"""
+    # 获取文件名（不含路径和扩展名）
+    name1 = os.path.splitext(os.path.basename(file1))[0]
+    name2 = os.path.splitext(os.path.basename(file2))[0]
+    
+    # 如果原始文件名完全相同，则认为是同一个文件
+    if name1 == name2:
+        return True
+        
+    # 去除所有标签、空格和标点
+    base1 = re.sub(r'\[[^\]]*\]|\([^)]*\)', '', name1)  # 去除标签
+    base2 = re.sub(r'\[[^\]]*\]|\([^)]*\)', '', name2)  # 去除标签
+    
+    # 去除所有空格和标点
+    base1 = re.sub(r'[\s]+', '', base1).lower()
+    base2 = re.sub(r'[\s]+', '', base2).lower()
+    
+    # 标准化中文（转换为简体）
+    base1 = normalize_chinese(base1)
+    base2 = normalize_chinese(base2)
+    
+    # 完全相同的基础名称才认为是同一个文件
+    return base1 == base2
+
+def preprocess_filename(filename):
+    """预处理文件名"""
+    # 获取文件名（不含路径）
+    name = os.path.basename(filename)
+    # 去除扩展名
+    name = name.rsplit('.', 1)[0]
+    
+    # 检查是否有系列标记前缀，如果有则去除
+    for prefix in SERIES_PREFIXES:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+            
+    # 去除方括号内容
+    name = re.sub(r'\[.*?\]', '', name)
+    # 去除圆括号内容
+    name = re.sub(r'\(.*?\)', '', name)
+    # 去除多余空格
+    name = ' '.join(name.split())
+    return name
+
+def get_series_key(filename):
+    """获取用于系列比较的键值"""
+    logger.info(f"处理文件: {filename}")
+    
+    # 创建一个虚拟的对比组，包含当前文件和自身的副本
+    # 这样可以利用 find_series_groups 的逻辑来提取系列名称
+    test_group = [filename, filename]
+    series_groups = find_series_groups(test_group)
+    
+    # 如果能找到系列名称，使用它
+    if series_groups:
+        series_name = next(iter(series_groups.keys()))
+        logger.info(f"找到系列名称: {series_name}")
+        return series_name
+    
+    # 如果找不到系列名称，退回到基本的预处理
+    name = preprocess_filename(filename)
+    name = normalize_chinese(name)
+    
+    logger.info(f"使用预处理结果: {name}")
+    
+    return name.strip()
+
+def get_keywords(name):
+    """将文件名分割为关键词列表"""
+    return name.strip().split()
+
+def find_longest_common_keywords(keywords1, keywords2):
+    """找出两个关键词列表中最长的连续公共部分"""
+    matcher = difflib.SequenceMatcher(None, keywords1, keywords2)
+    match = matcher.find_longest_match(0, len(keywords1), 0, len(keywords2))
+    return keywords1[match.a:match.a + match.size]
+
+def validate_series_name(name):
+    """验证和清理系列名称
+    
+    Args:
+        name: 原始系列名称
+        
+    Returns:
+        清理后的有效系列名称，如果无效则返回None
+    """
+    if not name or len(name) <= 1:
+        return None
+        
+    # 标准化中文（转换为简体）
+    name = normalize_chinese(name)
+    
+    # 去除末尾的特殊字符、数字和单字
+    name = re.sub(r'[\s.．。·・+＋\-－—_＿\d]+$', '', name)  # 去除末尾的特殊符号和数字
+    name = re.sub(r'[第章话集卷期篇季部册上中下前后完全][篇话集卷期章节部册全]*$', '', name)  # 去除末尾特殊词
+    name = re.sub(r'(?i)vol\.?\s*\d*$', '', name)  # 去除末尾的vol.xxx
+    name = re.sub(r'(?i)volume\s*\d*$', '', name)  # 去除末尾的volume xxx
+    name = re.sub(r'(?i)part\s*\d*$', '', name)  # 去除末尾的part xxx
+    name = name.strip()
+    
+    # 检查是否包含comic关键词
+    if re.search(r'(?i)comic', name):
+        return None
+    
+    # 检查是否只包含3个或更少的单字母
+    words = name.split()
+    if all(len(word) <= 1 for word in words) and len(''.join(words)) <= 3:
+        return None
+    
+    # 最终检查：结果必须长度大于1且不能以单字结尾
+    if not name or len(name) <= 1 or (len(name) > 0 and len(name.split()[-1]) <= 1):
+        return None
+        
+    return name
+
+def extract_keywords(filename):
+    """从文件名中提取关键词"""
+    # 去掉扩展名和方括号内容
+    name = get_base_filename(filename)
+    
+    # 使用多种分隔符分割文件名
+    separators = r'[\s]+'
+    keywords = []
+    
+    # 分割前先去除其他方括号和圆括号的内容
+    name = re.sub(r'\[[^\]]*\]|\([^)]*\)', ' ', name)
+    
+    # 分割并过滤空字符串
+    parts = [p.strip() for p in re.split(separators, name) if p.strip()]
+    
+    # 对于每个部分，如果长度大于1，则添加到关键词列表
+    for part in parts:
+        if len(part) > 1:  # 忽略单个字符
+            keywords.append(part)
+    
+    return keywords
+
+def find_series_groups(filenames):
+    """查找属于同一系列的文件组，使用三阶段匹配策略"""
+    # 预处理所有文件名
+    processed_names = {f: preprocess_filename(f) for f in filenames}
+    processed_keywords = {f: get_keywords(processed_names[f]) for f in filenames}
+    # 为比较创建简体版本
+    simplified_names = {f: normalize_chinese(n) for f, n in processed_names.items()}
+    simplified_keywords = {f: [normalize_chinese(k) for k in kws] for f, kws in processed_keywords.items()}
+    
+    # 存储系列分组
+    series_groups = defaultdict(list)
+    # 待处理的文件集合
+    remaining_files = set(filenames)
+    # 记录已匹配的文件
+    matched_files = set()
+    
+    # 预处理阶段：检查已标记的系列
+    logger.info("预处理阶段：检查已标记的系列")
+    
+    for file_path in list(remaining_files):
+        if file_path in matched_files:
+            continue
+            
+        file_name = os.path.basename(file_path)
+        for prefix in SERIES_PREFIXES:
+            if file_name.startswith(prefix):
+                # 提取系列名
+                series_name = file_name[len(prefix):]
+                # 去除可能的其他标记
+                series_name = re.sub(r'\[.*?\]|\(.*?\)', '', series_name)
+                series_name = series_name.strip()
+                if series_name:
+                    series_groups[series_name].append(file_path)
+                    matched_files.add(file_path)
+                    remaining_files.remove(file_path)
+                    logger.info(f"预处理阶段：文件 '{os.path.basename(file_path)}' 已标记为系列 '{series_name}'")
+                break
+    
+    # 第一阶段：风格匹配（关键词匹配）
+    logger.info("第一阶段：风格匹配（关键词匹配）")
+    
+    while remaining_files:
+        best_length = 0
+        best_common = None
+        best_pair = None
+        best_series_name = None
+        
+        # 对剩余文件进行两两比较
+        for file1 in remaining_files:
+            if file1 in matched_files:
+                continue
+                
+            keywords1 = simplified_keywords[file1]  # 使用简体版本比较
+            base_name1 = get_base_filename(os.path.basename(file1))
+            
+            for file2 in remaining_files - {file1}:
+                if file2 in matched_files:
+                    continue
+                    
+                # 检查基础名是否完全相同
+                base_name2 = get_base_filename(os.path.basename(file2))
+                if base_name1 == base_name2:
+                    continue  # 如果基础名完全相同,跳过这对文件
+                    
+                keywords2 = simplified_keywords[file2]  # 使用简体版本比较
+                common = find_longest_common_keywords(keywords1, keywords2)
+                
+                if common and len(common) > best_length:
+                    # 验证系列名称
+                    series_name = validate_series_name(' '.join(common))
+                    if series_name:
+                        best_length = len(common)
+                        best_common = common
+                        best_pair = (file1, file2)
+                        best_series_name = series_name
+        
+        if best_pair and best_series_name:
+            matched_files_this_round = set(best_pair)
+            base_name1 = get_base_filename(os.path.basename(best_pair[0]))
+            
+            for other_file in remaining_files - matched_files_this_round - matched_files:
+                # 检查基础名是否与第一个文件相同
+                other_base_name = get_base_filename(os.path.basename(other_file))
+                if base_name1 == other_base_name:
+                    continue  # 如果基础名相同,跳过这个文件
+                    
+                other_keywords = simplified_keywords[other_file]  # 使用简体版本比较
+                common = find_longest_common_keywords(simplified_keywords[best_pair[0]], other_keywords)
+                if common == best_common:
+                    matched_files_this_round.add(other_file)
+            
+            # 使用最佳系列名
+            series_groups[best_series_name].extend(matched_files_this_round)
+            remaining_files -= matched_files_this_round
+            matched_files.update(matched_files_this_round)
+            
+            logger.info(f"第一阶段：通过关键词匹配找到系列 '{best_series_name}'")
+            for file_path in matched_files_this_round:
+                logger.info(f"  └─ {os.path.basename(file_path)}")
+        else:
+            break  # 没有找到匹配，进入第二阶段
+    
+    # 第二阶段：完全基础名匹配
+    if remaining_files:
+        logger.info("第二阶段：完全基础名匹配")
+        
+        # 获取所有已存在的系列名
+        existing_series = list(series_groups.keys())
+        
+        # 从目录中获取已有的系列文件夹名称
+        dir_path = os.path.dirname(list(remaining_files)[0])  # 获取第一个文件的目录路径
+        try:
+            for folder_name in os.listdir(dir_path):
+                if os.path.isdir(os.path.join(dir_path, folder_name)):
+                    # 检查是否有系列标记
+                    for prefix in SERIES_PREFIXES:
+                        if folder_name.startswith(prefix):
+                            series_name = folder_name[len(prefix):]  # 去掉前缀
+                            if series_name not in existing_series:
+                                existing_series.append(series_name)
+                                logger.info(f"第二阶段：从目录中找到已有系列 '{series_name}'")
+                            break
+        except Exception:
+            pass  # 如果读取目录失败，仅使用已有的系列名
+        
+        # 检查剩余文件是否包含已有系列名
+        matched_files_by_series = defaultdict(list)
+        for file in list(remaining_files):
+            if file in matched_files:
+                continue
+                
+            base_name = simplified_names[file]  # 使用简体版本比较
+            base_name_no_space = re.sub(r'\s+', '', base_name)
+            for series_name in existing_series:
+                series_base = normalize_chinese(series_name)  # 只在比较时转换为简体
+                series_base_no_space = re.sub(r'\s+', '', series_base)
+                # 只要文件名中包含系列名就匹配
+                if series_base_no_space in base_name_no_space:
+                    # 检查是否有基础名相同的文件已经在这个系列中
+                    base_name_current = get_base_filename(os.path.basename(file))
+                    has_same_base = False
+                    for existing_file in matched_files_by_series[series_name]:
+                        if get_base_filename(os.path.basename(existing_file)) == base_name_current:
+                            has_same_base = True
+                            break
+                    
+                    if not has_same_base:
+                        matched_files_by_series[series_name].append(file)  # 使用原始系列名
+                        matched_files.add(file)
+                        remaining_files.remove(file)
+                        logger.info(f"第二阶段：文件 '{os.path.basename(file)}' 匹配到已有系列 '{series_name}'（包含系列名）")
+                    break
+        
+        # 将匹配的文件添加到对应的系列组
+        for series_name, files in matched_files_by_series.items():
+            series_groups[series_name].extend(files)
+            logger.info(f"第二阶段：将 {len(files)} 个文件添加到系列 '{series_name}'")
+            for file_path in files:
+                logger.info(f"  └─ {os.path.basename(file_path)}")
+    
+    # 第三阶段：最长公共子串匹配
+    if remaining_files:
+        logger.info("第三阶段：最长公共子串匹配")
+            
+        while remaining_files:
+            best_ratio = 0
+            best_pair = None
+            best_common = None
+            original_form = None  # 保存原始大小写形式
+            
+            # 对剩余文件进行两两比较
+            for file1 in remaining_files:
+                if file1 in matched_files:
+                    continue
+                    
+                base1 = simplified_names[file1]  # 使用简体版本比较
+                base1_lower = base1.lower()
+                original1 = processed_names[file1]  # 保存原始形式
+                base_name1 = get_base_filename(os.path.basename(file1))
+                
+                for file2 in remaining_files - {file1}:
+                    if file2 in matched_files:
+                        continue
+                        
+                    # 检查基础名是否完全相同
+                    base_name2 = get_base_filename(os.path.basename(file2))
+                    if base_name1 == base_name2:
+                        continue  # 如果基础名完全相同,跳过这对文件
+                        
+                    base2 = simplified_names[file2]  # 使用简体版本比较
+                    base2_lower = base2.lower()
+                    
+                    # 使用小写形式进行比较
+                    matcher = difflib.SequenceMatcher(None, base1_lower, base2_lower)
+                    ratio = matcher.ratio()
+                    if ratio > best_ratio and ratio > 0.6:
+                        best_ratio = ratio
+                        best_pair = (file1, file2)
+                        match = matcher.find_longest_match(0, len(base1_lower), 0, len(base2_lower))
+                        best_common = base1_lower[match.a:match.a + match.size]
+                        # 保存原始形式
+                        original_form = original1[match.a:match.a + match.size]
+            
+            if best_pair and best_common and len(best_common.strip()) > 1:
+                matched_files_this_round = set(best_pair)
+                base_name1 = get_base_filename(os.path.basename(best_pair[0]))
+                
+                for other_file in remaining_files - matched_files_this_round - matched_files:
+                    # 检查基础名是否与第一个文件相同
+                    other_base_name = get_base_filename(os.path.basename(other_file))
+                    if base_name1 == other_base_name:
+                        continue  # 如果基础名相同,跳过这个文件
+                        
+                    other_base = simplified_names[other_file].lower()  # 使用简体小写版本比较
+                    if best_common in other_base:
+                        matched_files_this_round.add(other_file)
+                
+                # 使用原始形式作为系列名
+                series_name = validate_series_name(original_form)
+                if series_name:
+                    series_groups[series_name].extend(matched_files_this_round)
+                    remaining_files -= matched_files_this_round
+                    matched_files.update(matched_files_this_round)
+                    logger.info(f"第三阶段：通过公共子串匹配找到系列 '{series_name}'")
+                    logger.info(f"  └─ 公共子串：'{best_common}' (相似度: {best_ratio:.2%})")
+                    for file_path in matched_files_this_round:
+                        logger.info(f"  └─ 文件 '{os.path.basename(file_path)}'")
+                else:
+                    remaining_files.remove(best_pair[0])
+                    matched_files.add(best_pair[0])
+            else:
+                break
+    
+    if remaining_files:
+        logger.warning(f"还有 {len(remaining_files)} 个文件未能匹配到任何系列")
+    
+    return dict(series_groups)
+
+def update_series_folder_name(old_path):
+    """更新系列文件夹名称为最新标准"""
+    try:
+        dir_name = os.path.basename(old_path)
+        is_series = False
+        prefix_used = None
+        
+        # 检查是否是系列文件夹
+        for prefix in SERIES_PREFIXES:
+            if dir_name.startswith(prefix):
+                is_series = True
+                prefix_used = prefix
+                break
+                
+        if not is_series:
+            return False
+            
+        # 提取原始系列名
+        old_series_name = dir_name[len(prefix_used):]
+        # 使用新标准处理系列名
+        new_series_name = get_series_key(old_series_name)
+        
+        if not new_series_name or new_series_name == old_series_name:
+            return False
+            
+        # 创建新路径（使用标准系列标记[#s]）
+        new_path = os.path.join(os.path.dirname(old_path), f'[#s]{new_series_name}')
+        
+        # 如果新路径已存在，检查是否为不同路径
+        if os.path.exists(new_path) and os.path.abspath(new_path) != os.path.abspath(old_path):
+            return False
+            
+        # 重命名文件夹
+        os.rename(old_path, new_path)
+        return True
+        
+    except Exception as e:
+        logger.error(f"更新系列文件夹名称失败 {old_path}: {str(e)}")
+        return False
+
+def update_all_series_folders(directory_path):
+    """更新目录下所有的系列文件夹名称"""
+    try:
+        updated_count = 0
+        for root, dirs, _ in os.walk(directory_path):
+            for dir_name in dirs:
+                if dir_name.startswith('[#s]'):
+                    full_path = os.path.join(root, dir_name)
+                    if update_series_folder_name(full_path):
+                        updated_count += 1
+        
+        if updated_count > 0:
+            logger.info(f"更新了 {updated_count} 个系列文件夹名称")
+            
+        return updated_count
+        
+    except Exception as e:
+        logger.error(f"更新系列文件夹失败: {str(e)}")
+        return 0
+
+def move_corrupted_archive(file_path, base_path):
+    """移动损坏的压缩包到损坏压缩包文件夹，保持原有目录结构"""
+    try:
+        # 获取相对路径
+        rel_path = os.path.relpath(os.path.dirname(file_path), base_path)
+        # 构建目标路径
+        corrupted_base = os.path.join(base_path, "损坏压缩包")
+        target_dir = os.path.join(corrupted_base, rel_path)
+        
+        # 确保目标目录存在
+        os.makedirs(target_dir, exist_ok=True)
+        
+        # 构建目标文件路径
+        target_path = os.path.join(target_dir, os.path.basename(file_path))
+        
+        # 如果目标路径已存在，添加数字后缀
+        if os.path.exists(target_path):
+            base, ext = os.path.splitext(target_path)
+            counter = 1
+            while os.path.exists(f"{base}_{counter}{ext}"):
+                counter += 1
+            target_path = f"{base}_{counter}{ext}"
+        
+        # 移动文件
+        shutil.move(file_path, target_path)
+        logger.info(f"已移动损坏压缩包: {os.path.basename(file_path)} -> 损坏压缩包/{rel_path}")
+            
+    except Exception as e:
+        logger.error(f"移动损坏压缩包失败 {file_path}: {str(e)}")
+
+def collect_items_for_series(directory_path, config, category_folders):
+    """收集用于系列提取的候选文件（含压缩包与其它受支持格式）。"""
+    base_level = len(Path(directory_path).parts)
+    items: list[str] = []
+    archives_to_check: list[str] = []
+    
+    for root, _, files in os.walk(directory_path):
+        current_level = len(Path(root).parts)
+        if current_level - base_level > 1:
+            continue
+            
+        # 检查当前目录是否有系列标记或是损坏压缩包文件夹
+        current_dir = os.path.basename(root)
+        if current_dir.startswith('[#s]') or current_dir == "损坏压缩包":
+            continue
+            
+        for file in files:
+            # 收集受支持的文件
+            if is_supported_file(file, config):
+                file_path = os.path.join(root, file)
+                # 检查文件名是否在系列提取黑名单中
+                if is_series_blacklisted(file):
+                    logger.warning(f"文件在系列提取黑名单中，跳过: {file}")
+                    continue
+                # 压缩包需要完整性检查，其它直接加入
+                if is_archive(file, config):
+                    archives_to_check.append(file_path)
+                else:
+                    items.append(file_path)
+    
+    if archives_to_check and config.get("check_integrity", True):
+        logger.info(f"正在检查 {len(archives_to_check)} 个压缩包的完整性...")
+        
+        # 使用线程池检查压缩包
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = {executor.submit(is_archive_corrupted, path): path for path in archives_to_check}
+            for i, future in enumerate(futures, 1):
+                path = futures[future]
+                # 更新当前任务状态
+                percentage = i / len(archives_to_check) * 100
+                logger.info(f"检测压缩包完整性... ({i}/{len(archives_to_check)}) {percentage:.1f}%")
+                try:
+                    is_corrupted = future.result()
+                    if is_corrupted:
+                        logger.warning(f"压缩包已损坏: {os.path.basename(path)}")
+                        # 移动损坏的压缩包
+                        move_corrupted_archive(path, directory_path)
+                    else:
+                        items.append(path)
+                except Exception as e:
+                    logger.error(f"检查压缩包时出错: {os.path.basename(path)}")
+                    # 将出错的压缩包也视为损坏
+                    move_corrupted_archive(path, directory_path)
+    elif archives_to_check:
+        # 未启用完整性检测，直接加入
+        items.extend(archives_to_check)
+                    
+    return items
+
+def create_series_folders(directory_path, files):
+    """为同一系列的文件创建文件夹（文件可为压缩包/视频/自定义格式等）。"""
+    dir_groups = defaultdict(list)
+    # 仅处理实际存在的受支持文件
+    files = [f for f in files if os.path.isfile(f)]
+
+    for fp in files:
+        dir_path = os.path.dirname(fp)
+        # 检查父目录是否有系列标记
+        parent_name = os.path.basename(dir_path)
+        is_series_dir = any(parent_name.startswith(prefix) for prefix in SERIES_PREFIXES)
+        if is_series_dir:
+            continue
+        dir_groups[dir_path].append(fp)
+    
+    for dir_path, dir_archives in dir_groups.items():
+        if len(dir_archives) <= 1:
+            continue
+        
+        logger.info(f"找到 {len(dir_archives)} 个候选文件")
+        
+        series_groups = find_series_groups(dir_archives)
+        
+        if series_groups:
+            logger.info(f"找到 {len(series_groups)} 个系列")
+            
+            # 检查是否所有文件都会被移动到同一个系列
+            total_files = len(dir_archives)
+            for series_name, files in series_groups.items():
+                if series_name == "其他":
+                    continue
+                if len(files) == total_files:
+                    logger.warning(f"所有文件都属于同一个系列，跳过创建子文件夹")
+                    return
+            
+            # 创建一个字典来记录每个系列的文件夹路径
+            series_folders = {}
+            
+            # 首先创建所有需要的系列文件夹
+            for series_name, files in series_groups.items():
+                # 跳过"其他"分类和只有一个文件的系列
+                if series_name == "其他" or len(files) <= 1:
+                    if series_name == "其他":
+                        logger.warning(f"{len(files)} 个文件未能匹配到系列")
+                    else:
+                        logger.warning(f"系列 '{series_name}' 只有一个文件，跳过创建文件夹")
+                    continue
+                
+                # 添加系列标记（使用标准系列标记[#s]）
+                series_folder = os.path.join(dir_path, f'[#s]{series_name.strip()}')
+                if not os.path.exists(series_folder):
+                    os.makedirs(series_folder)
+                    logger.info(f"创建系列文件夹: [#s]{series_name}")
+                series_folders[series_name] = series_folder
+            
+            # 然后移动每个系列的文件
+            for series_name, folder_path in series_folders.items():
+                files = series_groups[series_name]
+                logger.info(f"开始移动系列 '{series_name}' 的文件...")
+                
+                for file_path in files:
+                    target_path = os.path.join(folder_path, os.path.basename(file_path))
+                    if not os.path.exists(target_path):
+                        shutil.move(file_path, target_path)
+                        logger.info(f"  └─ 移动: {os.path.basename(file_path)}")
+                    else:
+                        logger.warning(f"文件已存在于系列 '{series_name}': {os.path.basename(file_path)}")
+            
+            logger.info("系列提取完成")
+        
+        logger.info(f"目录处理完成: {dir_path}")
+
+class seriex:
+    """系列提取器类，处理系列提取相关操作"""
+    
+    def __init__(self, similarity_config=None, config_path: Optional[str] = None):
+        """初始化系列提取器
+        
+        Args:
+            similarity_config: 相似度配置字典，如果提供则覆盖默认配置
+        """
+        self.logger = setup_logger('seriex')
+        # 加载格式/行为配置（TOML）
+        self.config = load_seriex_config(config_path)
+        if similarity_config:
+            SIMILARITY_CONFIG.update(similarity_config)
+        
+    def process_directory(self, directory_path):
+        """处理指定目录，提取系列并整理到文件夹
+        
+        Args:
+            directory_path: 要处理的目录路径
+        
+        Returns:
+            bool: 处理是否成功
+        """
+        try:
+            if not os.path.exists(directory_path) or not os.path.isdir(directory_path):
+                self.logger.error(f"目录不存在或不是有效目录: {directory_path}")
+                return False
+                
+            # 更新旧的系列文件夹名称
+            self.logger.info(f"检查并更新旧的系列文件夹名称...")
+            update_all_series_folders(directory_path)
+            
+            # 收集用于系列提取的候选文件
+            self.logger.info(f"开始查找可提取系列的文件（按配置扩展名）...")
+            items = collect_items_for_series(directory_path, self.config, [])
+            
+            if not items:
+                self.logger.info("没有找到可提取系列的文件")
+                return True
+            
+            # 创建系列文件夹
+            self.logger.info(f"在目录及其子文件夹下找到 {len(items)} 个有效文件")
+            create_series_folders(directory_path, items)
+            
+            self.logger.info(f"目录处理完成: {directory_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"处理目录时出错: {str(e)}")
+            return False

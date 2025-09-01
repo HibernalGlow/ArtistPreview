@@ -1,0 +1,13 @@
+# 默认配置（打包到包目录，作为无外部配置时的默认）
+
+# 参与系列归类的扩展
+formats = [
+  "mp4", "nov", "zip",
+  "rar", "7z", "cbz", "cbr"
+]
+
+# 需要进行 7z 完整性检测的归档扩展
+archive_formats = ["zip", "rar", "7z", "cbz", "cbr"]
+
+# 是否进行归档完整性检测（true 会用 7z t 检测）
+check_integrity = true
