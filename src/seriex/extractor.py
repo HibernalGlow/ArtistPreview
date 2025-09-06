@@ -617,11 +617,15 @@ def move_corrupted_archive(file_path, base_path):
     except Exception as e:
         logger.error(f"移动损坏压缩包失败 {file_path}: {str(e)}")
 
-def collect_items_for_series(directory_path, config, category_folders):
-    """收集用于系列提取的候选文件（含压缩包与其它受支持格式）。"""
+def collect_items_for_series(directory_path, config, category_folders, dry_run: bool = False):
+    """收集用于系列提取的候选文件（含压缩包与其它受支持格式）。
+
+    返回 (items, corrupted) 列表；当 dry_run=True 时，不会移动损坏包，仅记录到 corrupted。
+    """
     base_level = len(Path(directory_path).parts)
     items: list[str] = []
     archives_to_check: list[str] = []
+    corrupted: list[str] = []
     
     for root, _, files in os.walk(directory_path):
         current_level = len(Path(root).parts)
@@ -662,19 +666,25 @@ def collect_items_for_series(directory_path, config, category_folders):
                     is_corrupted = future.result()
                     if is_corrupted:
                         logger.warning(f"压缩包已损坏: {os.path.basename(path)}")
-                        # 移动损坏的压缩包
-                        move_corrupted_archive(path, directory_path)
+                        if dry_run:
+                            corrupted.append(path)
+                        else:
+                            # 移动损坏的压缩包
+                            move_corrupted_archive(path, directory_path)
                     else:
                         items.append(path)
                 except Exception as e:
                     logger.error(f"检查压缩包时出错: {os.path.basename(path)}")
-                    # 将出错的压缩包也视为损坏
-                    move_corrupted_archive(path, directory_path)
+                    if dry_run:
+                        corrupted.append(path)
+                    else:
+                        # 将出错的压缩包也视为损坏
+                        move_corrupted_archive(path, directory_path)
     elif archives_to_check:
         # 未启用完整性检测，直接加入
         items.extend(archives_to_check)
                     
-    return items
+    return items, corrupted
 
 def create_series_folders(directory_path, files, config, add_prefix: bool | None = None):
     """为同一系列的文件创建文件夹（文件可为压缩包/视频/自定义格式等）。
@@ -763,6 +773,51 @@ def create_series_folders(directory_path, files, config, add_prefix: bool | None
         logger.info(f"目录处理完成: {dir_path}")
     return summary
 
+def compute_series_plan(directory_path, files, config, add_prefix: bool | None = None):
+    """计算系列文件夹与需要移动的文件（不产生任何副作用）。
+
+    返回结构与 create_series_folders 相同的 summary，但不创建目录、不移动文件。
+    """
+    dir_groups = defaultdict(list)
+    summary: dict[str, dict[str, list[str]]] = {}
+    use_prefix = add_prefix if add_prefix is not None else config.get("add_prefix", True)
+    creation_prefix = config.get("prefix", "[#s]") if use_prefix else ""
+    files = [f for f in files if os.path.isfile(f)]
+
+    for fp in files:
+        dir_path = os.path.dirname(fp)
+        parent_name = os.path.basename(dir_path)
+        is_series_dir = any(parent_name.startswith(prefix) for prefix in SERIES_PREFIXES)
+        if is_series_dir:
+            continue
+        dir_groups[dir_path].append(fp)
+
+    for dir_path, dir_archives in dir_groups.items():
+        if len(dir_archives) <= 1:
+            continue
+
+        series_groups = find_series_groups(dir_archives)
+        if not series_groups:
+            continue
+
+        total_files = len(dir_archives)
+        plan_for_dir: dict[str, list[str]] = {}
+
+        for series_name, files_in_series in series_groups.items():
+            if series_name == "其他" or len(files_in_series) <= 1:
+                continue
+            if len(files_in_series) == total_files:
+                # 全部文件同一系列，按原逻辑跳过创建子目录
+                plan_for_dir = {}
+                break
+            folder_name = f"{creation_prefix}{series_name.strip()}"
+            plan_for_dir[folder_name] = list(files_in_series)
+
+        if plan_for_dir:
+            summary[dir_path] = plan_for_dir
+
+    return summary
+
 class seriex:
     """系列提取器类，处理系列提取相关操作"""
     
@@ -784,8 +839,10 @@ class seriex:
                 SERIES_PREFIXES.add(creation_prefix)
         except Exception:
             pass
-        # 最近一次运行的汇总
-        self.last_summary: dict[str, dict[str, list[str]]] = {}
+        # 最近一次运行的汇总/计划
+        self.last_summary = {}
+        self.last_plan = {}
+        self.last_corrupted = []
         if similarity_config:
             SIMILARITY_CONFIG.update(similarity_config)
         
@@ -811,7 +868,7 @@ class seriex:
             
             # 收集用于系列提取的候选文件
             self.logger.info(f"开始查找可提取系列的文件（按配置扩展名）...")
-            items = collect_items_for_series(directory_path, self.config, [])
+            items, _ = collect_items_for_series(directory_path, self.config, [], dry_run=False)
             
             if not items:
                 self.logger.info("没有找到可提取系列的文件")
@@ -827,3 +884,51 @@ class seriex:
         except Exception as e:
             self.logger.error(f"处理目录时出错: {str(e)}")
             return False
+
+    def prepare_directory(self, directory_path):
+        """预处理：仅生成计划与摘要，不进行任何移动。"""
+        if not os.path.exists(directory_path) or not os.path.isdir(directory_path):
+            self.logger.error(f"目录不存在或不是有效目录: {directory_path}")
+            return {}
+        # 不改名老目录以避免副作用
+        items, corrupted = collect_items_for_series(directory_path, self.config, [], dry_run=True)
+        self.last_corrupted = corrupted
+        plan = compute_series_plan(directory_path, items, self.config, add_prefix=self.add_prefix)
+        self.last_plan = plan
+        return plan
+
+    def apply_prepared_plan(self, directory_path):
+        """执行上一次准备的计划，真正进行移动与目录创建，同时处理损坏包移动。"""
+        if not self.last_plan:
+            self.logger.info("没有可执行的计划")
+            return {}
+        # 移动损坏包
+        if self.config.get("check_integrity", True) and self.last_corrupted:
+            for path in self.last_corrupted:
+                try:
+                    move_corrupted_archive(path, directory_path)
+                except Exception as e:
+                    logger.error(f"移动损坏压缩包失败: {os.path.basename(path)}")
+
+        # 执行计划：创建目录并移动
+        summary: dict[str, dict[str, list[str]]] = {}
+        for dir_path, folder_map in self.last_plan.items():
+            summary.setdefault(dir_path, {})
+            for folder_name, files in folder_map.items():
+                series_folder = os.path.join(dir_path, folder_name)
+                if not os.path.exists(series_folder):
+                    os.makedirs(series_folder, exist_ok=True)
+                    logger.info(f"创建系列文件夹: {folder_name}")
+                moved_list: list[str] = []
+                for file_path in files:
+                    target_path = os.path.join(series_folder, os.path.basename(file_path))
+                    if not os.path.exists(target_path):
+                        shutil.move(file_path, target_path)
+                        logger.info(f"  └─ 移动: {os.path.basename(file_path)}")
+                        moved_list.append(os.path.basename(file_path))
+                    else:
+                        logger.warning(f"文件已存在于系列 '{folder_name}': {os.path.basename(file_path)}")
+                if moved_list:
+                    summary[dir_path].setdefault(folder_name, []).extend(moved_list)
+        self.last_summary = summary
+        return summary

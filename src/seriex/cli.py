@@ -86,28 +86,78 @@ def extract(
         if os.path.exists(path):
             if os.path.isdir(path):
                 typer.echo(f"\n📂 处理目录: {path}")
-                if extractor.process_directory(path):
+                # 先做预处理(plan)
+                plan = extractor.prepare_directory(path)
+                if plan:
+                    tree = Tree(f"计划: {path}")
+                    for d, groups in plan.items():
+                        dnode = tree.add(d)
+                        for folder, files in groups.items():
+                            fnode = dnode.add(f"{folder}")
+                            for fp in files:
+                                fnode.add(os.path.basename(fp))
+                    console.print(tree)
+                    if not Confirm.ask("是否执行上述计划?", default=True):
+                        continue
+                # 执行
+                summary = extractor.apply_prepared_plan(path)
+                if summary:
                     success_count += 1
                     # 输出汇总树
-                    if extractor.last_summary:
-                        tree = Tree(f"结果: {path}")
-                        for d, groups in extractor.last_summary.items():
-                            dnode = tree.add(d)
-                            for folder, files in groups.items():
-                                fnode = dnode.add(f"{folder}")
-                                for fn in files:
-                                    fnode.add(fn)
-                        console.print(tree)
+                    tree = Tree(f"结果: {path}")
+                    for d, groups in summary.items():
+                        dnode = tree.add(d)
+                        for folder, files in groups.items():
+                            fnode = dnode.add(f"{folder}")
+                            for fn in files:
+                                fnode.add(fn)
+                    console.print(tree)
             else:
                 typer.echo(f"⚠️ 跳过文件 {path}，只能处理目录")
+@app.command()
+def plan(
+    paths: List[str] = typer.Argument(None, help="要预处理的路径列表"),
+    clipboard: bool = typer.Option(False, "--clipboard", "-c", help="从剪贴板读取路径"),
+    config: Optional[str] = typer.Option(None, "--config", "-C", help="TOML 配置文件路径"),
+    prefix: Optional[str] = typer.Option(None, "--prefix", help="自定义系列前缀（覆盖配置）"),
+    add_prefix: Optional[bool] = typer.Option(None, "--add-prefix/--no-add-prefix", help="是否为新建系列文件夹添加前缀（可覆盖配置）"),
+):
+    """仅预处理，展示移动计划，不执行。"""
+    all_paths = list(paths) if paths else []
+    if clipboard:
+        try:
+            import pyperclip
+            clipboard_content = pyperclip.paste().strip()
+            if clipboard_content:
+                all_paths.extend([p.strip() for p in clipboard_content.replace('\r\n','\n').split('\n') if p.strip()])
+        except ImportError:
+            typer.echo("未安装 pyperclip，无法从剪贴板读取。")
+
+    if not all_paths:
+        all_paths.append(os.getcwd())
+
+    extractor = seriex(config_path=config, add_prefix=add_prefix)
+    if prefix is not None:
+        extractor.config["prefix"] = prefix
+
+    for path in all_paths:
+        path = path.strip('"').strip("'")
+        if not os.path.isdir(path):
+            typer.echo(f"❌ 路径不是目录: {path}")
+            continue
+        plan = extractor.prepare_directory(path)
+        tree = Tree(f"计划: {path}")
+        if plan:
+            for d, groups in plan.items():
+                dnode = tree.add(d)
+                for folder, files in groups.items():
+                    fnode = dnode.add(f"{folder}")
+                    for fp in files:
+                        fnode.add(os.path.basename(fp))
         else:
-            typer.echo(f"❌ 路径不存在: {path}")
-    
-    # 显示处理结果
-    if success_count > 0:
-        typer.echo(f"\n✅ 成功处理了 {success_count}/{len(all_paths)} 个路径")
-    else:
-        typer.echo("\n❌ 没有成功处理任何路径")
+            tree.add("无可执行计划")
+        console.print(tree)
+        # typer.echo(f"❌ 路径不存在: {path}")
 
 def interactive():
     """使用Rich库实现的交互式界面"""
@@ -220,21 +270,39 @@ def interactive():
             if os.path.exists(path):
                 if os.path.isdir(path):
                     console.print(f"\n[bold green]📂 处理目录:[/bold green] {path}")
-                    if extractor.process_directory(path):
-                        success_count += 1
-                        console.print(f"[green]✓ 成功处理目录: {path}[/green]")
-                        # 输出汇总树
-                        if extractor.last_summary:
-                            tree = Tree(f"结果: {path}")
-                            for d, groups in extractor.last_summary.items():
-                                dnode = tree.add(d)
+                    # 预处理计划
+                    plan = extractor.prepare_directory(path)
+                    plan_tree = Tree(f"计划: {path}")
+                    if plan:
+                        for d, groups in plan.items():
+                            dnode = plan_tree.add(d)
+                            for folder, files in groups.items():
+                                fnode = dnode.add(f"{folder}")
+                                for fp in files:
+                                    fnode.add(os.path.basename(fp))
+                    else:
+                        plan_tree.add("无可执行计划")
+                    console.print(plan_tree)
+
+                    # 确认是否执行
+                    if not Confirm.ask("是否执行上述计划?", default=True):
+                        console.print("[yellow]已跳过执行[/yellow]")
+                    else:
+                        summary = extractor.apply_prepared_plan(path)
+                        if summary:
+                            success_count += 1
+                            console.print(f"[green]✓ 成功处理目录: {path}[/green]")
+                            # 输出结果树
+                            res_tree = Tree(f"结果: {path}")
+                            for d, groups in summary.items():
+                                dnode = res_tree.add(d)
                                 for folder, files in groups.items():
                                     fnode = dnode.add(f"{folder}")
                                     for fn in files:
                                         fnode.add(fn)
-                            console.print(tree)
-                    else:
-                        console.print(f"[yellow]⚠ 处理目录遇到问题: {path}[/yellow]")
+                            console.print(res_tree)
+                        else:
+                            console.print(f"[yellow]⚠ 无变更或执行失败: {path}[/yellow]")
                 else:
                     console.print(f"[yellow]⚠ 跳过文件 {path}，只能处理目录[/yellow]")
             else:

@@ -8,7 +8,7 @@ from pathlib import Path
 import pyperclip
 import json
 from ..core.store import ArtistStore
-from ..core.service import ArtistService
+from ..core.service import ArtistService, extract_names_from_folder_name
 from ..core.models import ArtistRecord
 from datetime import datetime
 import os
@@ -193,6 +193,27 @@ def output(
         console.print(Panel(output_text, title=title))
     elif format == 'names':
         names = sorted({n for r in rows for n in r.names})
+        # 若输出黑名单关键词，则自动构建白名单并做差集过滤
+        if not keyword and category.lower() == 'black':
+            try:
+                cfg_paths = (state.config or {}).get('paths', {})
+                base_dir_str = cfg_paths.get('base_dir')
+                base_dir = Path(base_dir_str) if base_dir_str else (state.base_dir or Path.cwd())
+                excludes = (state.config or {}).get('exclude_keywords', [])
+                whitelist: set[str] = set()
+                if base_dir and base_dir.exists():
+                    for f in base_dir.iterdir():
+                        if f.is_dir():
+                            wl = extract_names_from_folder_name(f.name, exclude_keywords=excludes)
+                            if wl:
+                                whitelist.update(wl)
+                before = len(names)
+                names = [n for n in names if n not in whitelist]
+                removed = before - len(names)
+                if removed > 0:
+                    console.print(f"[yellow]白名单过滤: 移除 {removed} 项[/yellow]")
+            except Exception as e:
+                console.print(f"[red]白名单过滤失败: {e}[/red]")
         output_text = '\n'.join(names)
         console.print(output_text)
         json_data = names
