@@ -58,7 +58,7 @@ class ArtistClassifier:
         """更新画师列表"""
         logger.info("开始更新画师列表...")
         
-        base_dir = Path(r'E:\1EHV')
+        base_dir = Path(r'E:\1Hub\EH\1EHV')
         # logger.debug(f"扫描目录: {base_dir}")
         
         try:

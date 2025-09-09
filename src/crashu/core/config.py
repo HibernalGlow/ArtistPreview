@@ -11,9 +11,9 @@ class AppConfig:
     """应用程序配置类"""
     
     # 默认路径设置
-    default_source_path: str = "E:\\1EHV"
+    default_source_path: str = "E:\\1Hub\\EH\\1EHV"
     default_destination_path: str = "E:\\1Hub\\EH\\2EHV\\crash"
-    default_auto_dir: str = "E:\\1EHV"
+    default_auto_dir: str = "E:\\1Hub\\EH\\1EHV"
     
     # 默认相似度阈值
     default_similarity_threshold: float = 0.8

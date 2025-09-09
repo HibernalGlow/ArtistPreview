@@ -39,7 +39,7 @@ python src/crashu/__main__.py
 2. **输入源文件夹路径**
    - 输入要搜索的源文件夹路径（每行一个）
    - 输入空行结束输入
-   - 默认值：`E:\1EHV`
+   - 默认值：`E:\1Hub\EH\1EHV`
 
 3. **输入目标文件夹路径**
    - 输入移动文件夹的目标位置
@@ -57,7 +57,7 @@ python src/crashu/__main__.py
 
 假设你有以下文件夹结构：
 ```
-E:\1EHV\
+E:\1Hub\EH\1EHV\
 ├── crash_reports/
 ├── error_logs/
 ├── bug_fixes/
@@ -83,7 +83,7 @@ E:\2EHV\crash\
 ## 配置说明
 
 ### 默认设置
-- **默认源路径**：`E:\1EHV`
+- **默认源路径**：`E:\1Hub\EH\1EHV`
 - **默认目标路径**：`E:\2EHV\crash`
 - **默认相似度阈值**：`0.8`
 

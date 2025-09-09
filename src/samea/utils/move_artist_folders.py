@@ -630,7 +630,7 @@ def run_command_line():
     # 如果没有有效的目录对，使用默认值
     if not directory_pairs:
         directory_pairs = [
-            ("E:\\999EHV", "E:\\1EHV"),
+            ("E:\\1Hub\\EH\\999EHV", "E:\\1Hub\\EH\\1EHV"),
         ]
     
     # 处理所有目录对
@@ -648,21 +648,21 @@ def main_tui():
 
     # 定义输入框选项
     input_options = [
-        ("源目录", "source", "--source", "E:\\999EHV", "输入源目录路径"),
-        ("目标目录", "target", "--target", "E:\\1EHV", "输入目标目录路径"),
+        ("源目录", "source", "--source", "E:\\1Hub\\EH\\999EHV", "输入源目录路径"),
+        ("目标目录", "target", "--target", "E:\\1Hub\\EH\\1EHV", "输入目标目录路径"),
     ]
 
     # 预设配置
     preset_configs = {
         "标准模式": {
-            "description": "将E:\\999EHV下的画师文件夹移动到E:\\1EHV",
+            "description": "将E:\\1Hub\\EH\\999EHV下的画师文件夹移动到E:\\1Hub\\EH\\1EHV",
             "checkbox_options": [],
-            "input_values": {"source": "E:\\999EHV", "target": "E:\\1EHV"}
+            "input_values": {"source": "E:\\1Hub\\EH\\999EHV", "target": "E:\\1Hub\\EH\\1EHV"}
         },
         "预演模式": {
             "description": "预览将要执行的操作，不实际移动文件",
             "checkbox_options": ["dry_run"],
-            "input_values": {"source": "E:\\999EHV", "target": "E:\\1EHV"}
+            "input_values": {"source": "E:\\1Hub\\EH\\999EHV", "target": "E:\\1Hub\\EH\\1EHV"}
         },
         "剪贴板模式": {
             "description": "从剪贴板读取目录对(每两行一对)",
@@ -698,7 +698,7 @@ def main_tui():
         # 如果没有有效的目录对，使用默认值
         if not directory_pairs:
             directory_pairs = [
-                ("E:\\999EHV", "E:\\1EHV"),
+                ("E:\\1Hub\\EH\\999EHV", "E:\\1Hub\\EH\\1EHV"),
             ]
         init_TextualLogger()
         # 处理所有目录对
