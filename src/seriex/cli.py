@@ -34,6 +34,7 @@ def extract(
     config: Optional[str] = typer.Option(None, "--config", "-C", help="TOML 配置文件路径（可指定支持的格式，默认含 mp4/nov/zip 与常见压缩包）"),
     prefix: Optional[str] = typer.Option(None, "--prefix", help="自定义系列前缀（覆盖配置）"),
     add_prefix: Optional[bool] = typer.Option(None, "--add-prefix/--no-add-prefix", help="是否为新建系列文件夹添加前缀（可覆盖配置）"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认，直接执行移动计划"),
     known_series_dir: Optional[List[str]] = typer.Option(None, "--known-series-dir", help="已知系列库目录（可多次指定）；会读取其一级子目录名作为系列名，最优先匹配"),
     similarity: float = typer.Option(75.0, help="设置基本相似度阈值(0-100)，默认75"),
     ratio: float = typer.Option(75.0, help="设置完全匹配阈值(0-100)，默认75"),
@@ -101,8 +102,10 @@ def extract(
                             for fp in files:
                                 fnode.add(os.path.basename(fp))
                     console.print(tree)
-                    if not Confirm.ask("是否执行上述计划?", default=True):
-                        continue
+                    # 跳过确认或提示明确操作
+                    if not yes:
+                        if not Confirm.ask("是否执行上述计划? (按 Y 回车执行 / N 回车跳过)", default=True):
+                            continue
                 # 执行
                 summary = extractor.apply_prepared_plan(path)
                 if summary:
@@ -305,7 +308,7 @@ def interactive():
                     console.print(plan_tree)
 
                     # 确认是否执行
-                    if not Confirm.ask("是否执行上述计划?", default=True):
+                    if not Confirm.ask("是否执行上述计划? (按 Y 回车执行 / N 回车跳过)", default=True):
                         console.print("[yellow]已跳过执行[/yellow]")
                     else:
                         summary = extractor.apply_prepared_plan(path)

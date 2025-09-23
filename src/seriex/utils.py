@@ -109,8 +109,8 @@ def load_seriex_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     cfg: Dict[str, Any] = {
         "formats": sorted(_DEFAULT_SUPPORTED_EXTS),
         "archive_formats": sorted(_DEFAULT_ARCHIVE_EXTS),
-    "prefix": "[#s]",
-    "add_prefix": True,
+        "prefix": "[#s]",
+        "add_prefix": True,
         # 关闭压缩包完整性检查（功能移除，保留配置键向后兼容）
         "check_integrity": False,
         # 已知系列目录（一级子目录名将作为候选系列名），统一存入 known_series_dirs(List[str])
