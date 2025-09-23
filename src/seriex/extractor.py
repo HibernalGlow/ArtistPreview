@@ -37,7 +37,6 @@ from .utils import (
     normalize_chinese,
     is_archive,
     is_supported_file,
-    is_archive_corrupted,
     is_series_blacklisted,
     SERIES_PREFIXES,
     setup_logger,
@@ -54,6 +53,44 @@ SIMILARITY_CONFIG = {
     'PARTIAL_THRESHOLD': 85,  # 部分匹配阈值
     'TOKEN_THRESHOLD': 80,  # 标记匹配阈值
 }
+
+# 已知系列名称缓存（来自配置目录的一级子目录名）
+_KNOWN_SERIES_SET: set[str] = set()
+_PROCESSED_DIRS: set[str] = set()
+_LOAD_LOCK = threading.Lock()
+_RUNTIME_KNOWN_SERIES_DIRS: list[str] = []  # 运行时覆盖用（CLI/外部注入）
+
+def _load_known_series_from_dirs(dirs: list[str]):
+    """从配置的目录收集一级子目录名称，填充 _KNOWN_SERIES_SET；可重复合并。"""
+    with _LOAD_LOCK:
+        for root in dirs:
+            try:
+                if not root:
+                    continue
+                root = os.path.abspath(root)
+                if root in _PROCESSED_DIRS:
+                    continue
+                if not os.path.isdir(root):
+                    _PROCESSED_DIRS.add(root)
+                    continue
+                for name in os.listdir(root):
+                    full = os.path.join(root, name)
+                    if not os.path.isdir(full):
+                        continue
+                    # 剥离可能存在的系列前缀
+                    base = name
+                    for pfx in SERIES_PREFIXES:
+                        if base.startswith(pfx):
+                            base = base[len(pfx):]
+                            break
+                    base = base.strip()
+                    if base:
+                        _KNOWN_SERIES_SET.add(base)
+                _PROCESSED_DIRS.add(root)
+            except Exception:
+                # 忽略单个目录读取失败
+                _PROCESSED_DIRS.add(root)
+                continue
 
 def calculate_similarity(str1, str2):
     """计算两个字符串的相似度"""
@@ -288,7 +325,7 @@ def extract_keywords(filename):
     return keywords
 
 def find_series_groups(filenames):
-    """查找属于同一系列的文件组，使用三阶段匹配策略"""
+    """查找属于同一系列的文件组，使用三阶段匹配策略（含已知系列优先命中）"""
     # 预处理所有文件名
     processed_names = {f: preprocess_filename(f) for f in filenames}
     processed_keywords = {f: get_keywords(processed_names[f]) for f in filenames}
@@ -325,6 +362,67 @@ def find_series_groups(filenames):
                     logger.info(f"预处理阶段：文件 '{os.path.basename(file_path)}' 已标记为系列 '{series_name}'")
                 break
     
+    # 优先阶段：根据配置的“已知系列名”直接命中（当文件名包含该系列名时）
+    logger.info("优先阶段：准备加载已知系列目录配置...")
+    try:
+        # 优先使用运行时注入的目录，其次读取配置
+        runtime_dirs = list(_RUNTIME_KNOWN_SERIES_DIRS)
+        if runtime_dirs:
+            _load_known_series_from_dirs(runtime_dirs)
+        else:
+            from .utils import load_seriex_config as _load_cfg  # 局部导入避免循环
+            cfg = _load_cfg(None)
+            known_dirs = cfg.get("known_series_dirs", []) if isinstance(cfg, dict) else []
+            if isinstance(known_dirs, list) and known_dirs:
+                _load_known_series_from_dirs(known_dirs)
+    except Exception:
+        pass
+
+    logger.info(f"优先阶段：已知系列名数量={len(_KNOWN_SERIES_SET)}，待处理文件数={len(remaining_files)}")
+
+    if _KNOWN_SERIES_SET and remaining_files:
+        logger.info("优先阶段：匹配已知系列名（来自配置目录/运行时）")
+        matched_by_known = defaultdict(list)
+        known_norm_pairs: list[tuple[str, str]] = []  # (norm_no_space, original)
+        for s in _KNOWN_SERIES_SET:
+            s_norm = normalize_chinese(s)
+            s_norm = re.sub(r"\s+", "", s_norm)
+            if s_norm:
+                known_norm_pairs.append((s_norm, s))
+        # 优先匹配更长的系列名以避免被较短前缀提前命中
+        known_norm_pairs.sort(key=lambda x: len(x[0]), reverse=True)
+        for file in list(remaining_files):
+            base_name = simplified_names[file]
+            base_name_no_space = re.sub(r"\s+", "", base_name)
+            hit = None
+            for s_norm, s_orig in known_norm_pairs:
+                if s_norm and s_norm in base_name_no_space:
+                    hit = s_orig
+                    break
+            if hit:
+                matched_by_known[hit].append(file)
+                matched_files.add(file)
+                remaining_files.remove(file)
+                logger.info(f"优先阶段：文件 '{os.path.basename(file)}' 命中已知系列 '{hit}'（包含系列名）")
+        for series_name, files in matched_by_known.items():
+            if len(files) > 1:  # 与后续阶段一致，仅当系列内文件>1才建组
+                series_groups[series_name].extend(files)
+                logger.info(f"优先阶段：将 {len(files)} 个文件加入已知系列 '{series_name}'")
+    else:
+        # 更友好的提示，帮助定位配置问题
+        try:
+            from .utils import load_seriex_config as _load_cfg
+            cfg = _load_cfg(None)
+            known_dirs = cfg.get("known_series_dirs", []) if isinstance(cfg, dict) else []
+            has_runtime = bool(_RUNTIME_KNOWN_SERIES_DIRS)
+            if not known_dirs and not has_runtime:
+                logger.info("优先阶段：未配置已知系列目录，跳过")
+            elif known_dirs or has_runtime:
+                # 已配置但未加载到任何系列名
+                logger.info("优先阶段：已配置已知系列目录但未发现可用的系列名，跳过")
+        except Exception:
+            pass
+
     # 第一阶段：风格匹配（关键词匹配）
     logger.info("第一阶段：风格匹配（关键词匹配）")
     
@@ -617,14 +715,45 @@ def move_corrupted_archive(file_path, base_path):
     except Exception as e:
         logger.error(f"移动损坏压缩包失败 {file_path}: {str(e)}")
 
+def _safe_move(src: str, dst: str, max_retries: int = 2) -> str:
+    """更稳健的移动：
+    - 若目标存在，自动添加 _1、_2… 后缀避免覆盖；
+    - 若跨盘导致 os.rename/shutil.move 失败，退回 copy+remove；
+    - 返回最终目标路径。
+    """
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        base, ext = os.path.splitext(dst)
+        candidate = dst
+        idx = 1
+        while os.path.exists(candidate):
+            candidate = f"{base}_{idx}{ext}"
+            idx += 1
+        # 优先尝试 rename/move
+        try:
+            shutil.move(src, candidate)
+            return candidate
+        except Exception:
+            # 跨设备等问题：copytree/copy2 回退
+            for attempt in range(max_retries + 1):
+                try:
+                    shutil.copy2(src, candidate)
+                    os.remove(src)
+                    return candidate
+                except Exception as ex:
+                    if attempt >= max_retries:
+                        raise ex
+    except Exception as e:
+        logger.error(f"移动失败: {os.path.basename(src)} -> {dst}: {e}")
+        raise
+
 def collect_items_for_series(directory_path, config, category_folders, dry_run: bool = False):
     """收集用于系列提取的候选文件（含压缩包与其它受支持格式）。
 
-    返回 (items, corrupted) 列表；当 dry_run=True 时，不会移动损坏包，仅记录到 corrupted。
+    返回 (items, corrupted)；完整性检测已移除，corrupted 始终为空。
     """
     base_level = len(Path(directory_path).parts)
     items: list[str] = []
-    archives_to_check: list[str] = []
     corrupted: list[str] = []
     
     for root, _, files in os.walk(directory_path):
@@ -645,44 +774,8 @@ def collect_items_for_series(directory_path, config, category_folders, dry_run: 
                 if is_series_blacklisted(file):
                     logger.warning(f"文件在系列提取黑名单中，跳过: {file}")
                     continue
-                # 压缩包需要完整性检查，其它直接加入
-                if is_archive(file, config):
-                    archives_to_check.append(file_path)
-                else:
-                    items.append(file_path)
-    
-    if archives_to_check and config.get("check_integrity", True):
-        logger.info(f"正在检查 {len(archives_to_check)} 个压缩包的完整性...")
-        
-        # 使用线程池检查压缩包
-        with ThreadPoolExecutor(max_workers=16) as executor:
-            futures = {executor.submit(is_archive_corrupted, path): path for path in archives_to_check}
-            for i, future in enumerate(futures, 1):
-                path = futures[future]
-                # 更新当前任务状态
-                percentage = i / len(archives_to_check) * 100
-                logger.info(f"检测压缩包完整性... ({i}/{len(archives_to_check)}) {percentage:.1f}%")
-                try:
-                    is_corrupted = future.result()
-                    if is_corrupted:
-                        logger.warning(f"压缩包已损坏: {os.path.basename(path)}")
-                        if dry_run:
-                            corrupted.append(path)
-                        else:
-                            # 移动损坏的压缩包
-                            move_corrupted_archive(path, directory_path)
-                    else:
-                        items.append(path)
-                except Exception as e:
-                    logger.error(f"检查压缩包时出错: {os.path.basename(path)}")
-                    if dry_run:
-                        corrupted.append(path)
-                    else:
-                        # 将出错的压缩包也视为损坏
-                        move_corrupted_archive(path, directory_path)
-    elif archives_to_check:
-        # 未启用完整性检测，直接加入
-        items.extend(archives_to_check)
+                # 压缩包与其它受支持格式一并直接加入
+                items.append(file_path)
                     
     return items, corrupted
 
@@ -719,14 +812,7 @@ def create_series_folders(directory_path, files, config, add_prefix: bool | None
         if series_groups:
             logger.info(f"找到 {len(series_groups)} 个系列")
             
-            # 检查是否所有文件都会被移动到同一个系列
-            total_files = len(dir_archives)
-            for series_name, files in series_groups.items():
-                if series_name == "其他":
-                    continue
-                if len(files) == total_files:
-                    logger.warning(f"所有文件都属于同一个系列，跳过创建子文件夹")
-                    return
+            # 移除“全部同系列直接跳过”的早退逻辑；仍然执行移动，按既有规则建目录
             
             # 创建一个字典来记录每个系列的文件夹路径
             series_folders = {}
@@ -757,12 +843,12 @@ def create_series_folders(directory_path, files, config, add_prefix: bool | None
                 moved_list: list[str] = []
                 for file_path in files:
                     target_path = os.path.join(folder_path, os.path.basename(file_path))
-                    if not os.path.exists(target_path):
-                        shutil.move(file_path, target_path)
-                        logger.info(f"  └─ 移动: {os.path.basename(file_path)}")
-                        moved_list.append(os.path.basename(file_path))
-                    else:
-                        logger.warning(f"文件已存在于系列 '{series_name}': {os.path.basename(file_path)}")
+                    try:
+                        final_path = _safe_move(file_path, target_path)
+                        logger.info(f"  └─ 移动: {os.path.basename(file_path)} -> {os.path.basename(final_path)}")
+                        moved_list.append(os.path.basename(final_path))
+                    except Exception:
+                        logger.warning(f"移动失败，已跳过: {os.path.basename(file_path)}")
                 # 记录汇总
                 final_folder_name = os.path.basename(folder_path)
                 if moved_list:
@@ -845,6 +931,26 @@ class seriex:
         self.last_corrupted = []
         if similarity_config:
             SIMILARITY_CONFIG.update(similarity_config)
+        # 预加载已知系列名（基于配置）
+        try:
+            dirs = self.config.get("known_series_dirs", [])
+            if isinstance(dirs, list) and dirs:
+                _load_known_series_from_dirs(dirs)
+                # 同步到运行时变量，便于后续优先使用
+                global _RUNTIME_KNOWN_SERIES_DIRS
+                _RUNTIME_KNOWN_SERIES_DIRS = list(dirs)
+        except Exception:
+            pass
+
+    def reload_known_series_dirs(self, dirs: list[str]):
+        """运行时覆盖并重新加载已知系列目录。"""
+        try:
+            global _RUNTIME_KNOWN_SERIES_DIRS
+            _RUNTIME_KNOWN_SERIES_DIRS = list(dirs)
+            if dirs:
+                _load_known_series_from_dirs(dirs)
+        except Exception:
+            pass
         
     def process_directory(self, directory_path):
         """处理指定目录，提取系列并整理到文件夹
@@ -922,12 +1028,12 @@ class seriex:
                 moved_list: list[str] = []
                 for file_path in files:
                     target_path = os.path.join(series_folder, os.path.basename(file_path))
-                    if not os.path.exists(target_path):
-                        shutil.move(file_path, target_path)
-                        logger.info(f"  └─ 移动: {os.path.basename(file_path)}")
-                        moved_list.append(os.path.basename(file_path))
-                    else:
-                        logger.warning(f"文件已存在于系列 '{folder_name}': {os.path.basename(file_path)}")
+                    try:
+                        final_path = _safe_move(file_path, target_path)
+                        logger.info(f"  └─ 移动: {os.path.basename(file_path)} -> {os.path.basename(final_path)}")
+                        moved_list.append(os.path.basename(final_path))
+                    except Exception:
+                        logger.warning(f"移动失败，已跳过: {os.path.basename(file_path)}")
                 if moved_list:
                     summary[dir_path].setdefault(folder_name, []).extend(moved_list)
         self.last_summary = summary

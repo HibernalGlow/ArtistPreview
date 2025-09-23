@@ -11,6 +11,12 @@ import subprocess
 from pathlib import Path
 from typing import Iterable, Optional, Set, Dict, Any
 
+# 日志：使用 loguru
+try:
+    from loguru import logger as _loguru_logger  # type: ignore
+except Exception:  # pragma: no cover
+    _loguru_logger = None  # type: ignore
+
 # TOML 解析器（优先使用内置 tomllib，其次 tomli，若都不可用则置为 None）
 toml = None
 try:  # Python 3.11+
@@ -105,7 +111,10 @@ def load_seriex_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         "archive_formats": sorted(_DEFAULT_ARCHIVE_EXTS),
     "prefix": "[#s]",
     "add_prefix": True,
-        "check_integrity": True,
+        # 关闭压缩包完整性检查（功能移除，保留配置键向后兼容）
+        "check_integrity": False,
+        # 已知系列目录（一级子目录名将作为候选系列名），统一存入 known_series_dirs(List[str])
+        "known_series_dirs": [],
     }
 
     def _try_load_toml(path: str) -> Optional[Dict[str, Any]]:
@@ -176,6 +185,26 @@ def load_seriex_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         addp = node.get("add_prefix") if isinstance(node, dict) else None
         if isinstance(addp, bool):
             cfg["add_prefix"] = addp
+
+        # 兼容两种写法：known_series_dir (str) 与 known_series_dirs (list)
+        ksd_single = node.get("known_series_dir") if isinstance(node, dict) else None
+        ksd_list = node.get("known_series_dirs") if isinstance(node, dict) else None
+        merged_dirs: list[str] = []
+        if isinstance(ksd_single, str) and ksd_single.strip():
+            merged_dirs.append(ksd_single.strip())
+        if isinstance(ksd_list, list):
+            for p in ksd_list:
+                if isinstance(p, str) and p.strip():
+                    merged_dirs.append(p.strip())
+        if merged_dirs:
+            # 去重并保持顺序
+            seen = set()
+            deduped = []
+            for p in merged_dirs:
+                if p not in seen:
+                    seen.add(p)
+                    deduped.append(p)
+            cfg["known_series_dirs"] = deduped
 
     # 兜底保证集合正确
     fmts_set = _normalize_exts(cfg.get("formats", [])) or set(_DEFAULT_SUPPORTED_EXTS)
@@ -288,17 +317,40 @@ def is_series_blacklisted(filename):
             return True
     return False
 
-def setup_logger(name='series_extractor'):
-    """设置日志"""
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
+_LOGGER_CONFIGURED = False
 
-    # 避免重复添加 handler
-    if not logger.handlers:
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+def setup_logger(name: str = 'series_extractor'):
+    """提供一个与 logging.Logger 接口相近的记录器，但基于 loguru 实现。
 
-    return logger
+    - 统一格式：时间 - 名称 - 级别 - 消息
+    - 返回值为绑定了 name 的 loguru logger，调用方式与原 logger.info/debug 基本一致。
+    - 若 loguru 不可用则回退到标准 logging。
+    """
+    global _LOGGER_CONFIGURED
+    if _loguru_logger is None:
+        # 回退：使用标准 logging
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(formatter)
+            logger.addHandler(console_handler)
+        return logger
+
+    # loguru：仅配置一次全局 sink
+    if not _LOGGER_CONFIGURED:
+        # 简洁、包含名称的格式
+        try:
+            _loguru_logger.remove()
+        except Exception:
+            pass
+        _loguru_logger.add(
+            sink=lambda msg: print(msg, end=''),
+            format="{time:YYYY-MM-DD HH:mm:ss} - {extra[name]} - {level} - {message}\n",
+            level="INFO",
+        )
+        _LOGGER_CONFIGURED = True
+    # 绑定名称
+    return _loguru_logger.bind(name=name)

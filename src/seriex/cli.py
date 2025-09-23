@@ -34,6 +34,7 @@ def extract(
     config: Optional[str] = typer.Option(None, "--config", "-C", help="TOML 配置文件路径（可指定支持的格式，默认含 mp4/nov/zip 与常见压缩包）"),
     prefix: Optional[str] = typer.Option(None, "--prefix", help="自定义系列前缀（覆盖配置）"),
     add_prefix: Optional[bool] = typer.Option(None, "--add-prefix/--no-add-prefix", help="是否为新建系列文件夹添加前缀（可覆盖配置）"),
+    known_series_dir: Optional[List[str]] = typer.Option(None, "--known-series-dir", help="已知系列库目录（可多次指定）；会读取其一级子目录名作为系列名，最优先匹配"),
     similarity: float = typer.Option(75.0, help="设置基本相似度阈值(0-100)，默认75"),
     ratio: float = typer.Option(75.0, help="设置完全匹配阈值(0-100)，默认75"),
     partial: float = typer.Option(85.0, help="设置部分匹配阈值(0-100)，默认85"),
@@ -78,6 +79,9 @@ def extract(
     # 覆盖前缀（运行时）
     if prefix is not None:
         extractor.config["prefix"] = prefix
+    # 运行时注入已知系列目录
+    if known_series_dir:
+        extractor.reload_known_series_dirs(known_series_dir)
     
     # 处理每个路径
     success_count = 0
@@ -121,6 +125,7 @@ def plan(
     config: Optional[str] = typer.Option(None, "--config", "-C", help="TOML 配置文件路径"),
     prefix: Optional[str] = typer.Option(None, "--prefix", help="自定义系列前缀（覆盖配置）"),
     add_prefix: Optional[bool] = typer.Option(None, "--add-prefix/--no-add-prefix", help="是否为新建系列文件夹添加前缀（可覆盖配置）"),
+    known_series_dir: Optional[List[str]] = typer.Option(None, "--known-series-dir", help="已知系列库目录（可多次指定）；会读取其一级子目录名作为系列名，最优先匹配"),
 ):
     """仅预处理，展示移动计划，不执行。"""
     all_paths = list(paths) if paths else []
@@ -139,6 +144,8 @@ def plan(
     extractor = seriex(config_path=config, add_prefix=add_prefix)
     if prefix is not None:
         extractor.config["prefix"] = prefix
+    if known_series_dir:
+        extractor.reload_known_series_dirs(known_series_dir)
 
     for path in all_paths:
         path = path.strip('"').strip("'")
@@ -246,10 +253,23 @@ def interactive():
     if add_prefix and Confirm.ask("是否自定义前缀?", default=False):
         custom_prefix = Prompt.ask("请输入前缀（如 [#s]）", default="[#s]")
     
+    # 可选：指定“已知系列目录”（可多项，多行输入，空行结束）
+    runtime_known_dirs: list[str] = []
+    if Confirm.ask("是否指定'已知系列目录'(用于最优先匹配)?", default=False):
+        console.print("[dim]可输入多行路径，逐行回车；直接回车空行结束。[/dim]")
+        while True:
+            kp = Prompt.ask("请输入目录路径(留空结束)").strip()
+            if not kp:
+                break
+            runtime_known_dirs.append(kp)
+
     # 创建提取器
     extractor = seriex(similarity_config, config_path=cfg_path, add_prefix=add_prefix)
     if custom_prefix is not None:
         extractor.config["prefix"] = custom_prefix
+    # 注入已知系列目录（运行时）
+    if runtime_known_dirs:
+        extractor.reload_known_series_dirs(runtime_known_dirs)
     
     # 处理路径
     success_count = 0

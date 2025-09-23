@@ -11,3 +11,12 @@ formats = [
 # 其中需要进行完整性检测的归档格式（会用 7z t 检测）
 # 必须是 formats 的子集
 archive_formats = ["zip", "rar", "7z", "cbz", "cbr"]
+
+# 可选：从指定目录读取其一级子文件夹名称作为“已知系列名”
+# - 当文件名包含这些系列名时，将优先按该系列归类
+# - 支持单路径或数组（若两者皆提供，会合并）
+# known_series_dir = "D:/Your/SeriesLibrary"
+# known_series_dirs = [
+#   "D:/Your/SeriesLibrary",
+#   "E:/Another/SeriesRoot"
+# ]
