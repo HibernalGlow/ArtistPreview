@@ -115,6 +115,8 @@ def load_seriex_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         "check_integrity": False,
         # 已知系列目录（一级子目录名将作为候选系列名），统一存入 known_series_dirs(List[str])
         "known_series_dirs": [],
+        # 允许“命中参考系列名”的单文件也单独成组（默认开启）
+        "known_series_allow_single": True,
     }
 
     def _try_load_toml(path: str) -> Optional[Dict[str, Any]]:
@@ -205,6 +207,11 @@ def load_seriex_config(config_path: Optional[str] = None) -> Dict[str, Any]:
                     seen.add(p)
                     deduped.append(p)
             cfg["known_series_dirs"] = deduped
+
+        # 是否允许单文件（仅限命中参考系列名）
+        allow_single = node.get("known_series_allow_single") if isinstance(node, dict) else None
+        if isinstance(allow_single, bool):
+            cfg["known_series_allow_single"] = allow_single
 
     # 兜底保证集合正确
     fmts_set = _normalize_exts(cfg.get("formats", [])) or set(_DEFAULT_SUPPORTED_EXTS)

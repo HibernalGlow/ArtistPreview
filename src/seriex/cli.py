@@ -277,61 +277,50 @@ def interactive():
     # 处理路径
     success_count = 0
     
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console
-    ) as progress:
-        task = progress.add_task("[cyan]处理路径...[/cyan]", total=len(paths))
-        
-        for path in paths:
-            path = path.strip('"').strip("'")
-            progress.update(task, description=f"[cyan]处理: {path}[/cyan]")
-            
-            if os.path.exists(path):
-                if os.path.isdir(path):
-                    console.print(f"\n[bold green]📂 处理目录:[/bold green] {path}")
-                    # 预处理计划
-                    plan = extractor.prepare_directory(path)
-                    plan_tree = Tree(f"计划: {path}")
-                    if plan:
-                        for d, groups in plan.items():
-                            dnode = plan_tree.add(d)
+    for path in paths:
+        path = path.strip('"').strip("'")
+        console.print(f"[cyan]处理: {path}[/cyan]")
+
+        if os.path.exists(path):
+            if os.path.isdir(path):
+                console.print(f"\n[bold green]📂 处理目录:[/bold green] {path}")
+                # 预处理计划
+                plan = extractor.prepare_directory(path)
+                plan_tree = Tree(f"计划: {path}")
+                if plan:
+                    for d, groups in plan.items():
+                        dnode = plan_tree.add(d)
+                        for folder, files in groups.items():
+                            fnode = dnode.add(f"{folder}")
+                            for fp in files:
+                                fnode.add(os.path.basename(fp))
+                else:
+                    plan_tree.add("无可执行计划")
+                console.print(plan_tree)
+
+                # 确认是否执行
+                if not Confirm.ask("是否执行上述计划? (按 Y 回车执行 / N 回车跳过)", default=True):
+                    console.print("[yellow]已跳过执行[/yellow]")
+                else:
+                    summary = extractor.apply_prepared_plan(path)
+                    if summary:
+                        success_count += 1
+                        console.print(f"[green]✓ 成功处理目录: {path}[/green]")
+                        # 输出结果树
+                        res_tree = Tree(f"结果: {path}")
+                        for d, groups in summary.items():
+                            dnode = res_tree.add(d)
                             for folder, files in groups.items():
                                 fnode = dnode.add(f"{folder}")
-                                for fp in files:
-                                    fnode.add(os.path.basename(fp))
+                                for fn in files:
+                                    fnode.add(fn)
+                        console.print(res_tree)
                     else:
-                        plan_tree.add("无可执行计划")
-                    console.print(plan_tree)
-
-                    # 确认是否执行
-                    if not Confirm.ask("是否执行上述计划? (按 Y 回车执行 / N 回车跳过)", default=True):
-                        console.print("[yellow]已跳过执行[/yellow]")
-                    else:
-                        summary = extractor.apply_prepared_plan(path)
-                        if summary:
-                            success_count += 1
-                            console.print(f"[green]✓ 成功处理目录: {path}[/green]")
-                            # 输出结果树
-                            res_tree = Tree(f"结果: {path}")
-                            for d, groups in summary.items():
-                                dnode = res_tree.add(d)
-                                for folder, files in groups.items():
-                                    fnode = dnode.add(f"{folder}")
-                                    for fn in files:
-                                        fnode.add(fn)
-                            console.print(res_tree)
-                        else:
-                            console.print(f"[yellow]⚠ 无变更或执行失败: {path}[/yellow]")
-                else:
-                    console.print(f"[yellow]⚠ 跳过文件 {path}，只能处理目录[/yellow]")
+                        console.print(f"[yellow]⚠ 无变更或执行失败: {path}[/yellow]")
             else:
-                console.print(f"[red]❌ 路径不存在: {path}[/red]")
-            
-            progress.update(task, advance=1)
+                console.print(f"[yellow]⚠ 跳过文件 {path}，只能处理目录[/yellow]")
+        else:
+            console.print(f"[red]❌ 路径不存在: {path}[/red]")
     
     # 显示处理结果
     if success_count > 0:

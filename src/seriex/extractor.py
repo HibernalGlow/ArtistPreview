@@ -60,6 +60,20 @@ _PROCESSED_DIRS: set[str] = set()
 _LOAD_LOCK = threading.Lock()
 _RUNTIME_KNOWN_SERIES_DIRS: list[str] = []  # 运行时覆盖用（CLI/外部注入）
 
+def _series_in_known_set(series_name: str) -> bool:
+    try:
+        if not series_name:
+            return False
+        base = series_name
+        for pfx in SERIES_PREFIXES:
+            if base.startswith(pfx):
+                base = base[len(pfx):]
+                break
+        base = base.strip()
+        return base in _KNOWN_SERIES_SET
+    except Exception:
+        return False
+
 def _load_known_series_from_dirs(dirs: list[str]):
     """从配置的目录收集一级子目录名称，填充 _KNOWN_SERIES_SET；可重复合并。"""
     with _LOAD_LOCK:
@@ -383,17 +397,20 @@ def find_series_groups(filenames):
     if _KNOWN_SERIES_SET and remaining_files:
         logger.info("优先阶段：匹配已知系列名（来自配置目录/运行时）")
         matched_by_known = defaultdict(list)
-        known_norm_pairs: list[tuple[str, str]] = []  # (norm_no_space, original)
+        known_norm_pairs: list[tuple[str, str]] = []  # (norm_no_space_lower, original)
         for s in _KNOWN_SERIES_SET:
             s_norm = normalize_chinese(s)
             s_norm = re.sub(r"\s+", "", s_norm)
             if s_norm:
-                known_norm_pairs.append((s_norm, s))
+                known_norm_pairs.append((s_norm.lower(), s))
         # 优先匹配更长的系列名以避免被较短前缀提前命中
         known_norm_pairs.sort(key=lambda x: len(x[0]), reverse=True)
         for file in list(remaining_files):
-            base_name = simplified_names[file]
-            base_name_no_space = re.sub(r"\s+", "", base_name)
+            # 使用原始文件名（不移除方括号/圆括号内容），仅去扩展名
+            raw_name = os.path.basename(file)
+            raw_name = raw_name.rsplit('.', 1)[0]
+            base_name = normalize_chinese(raw_name)
+            base_name_no_space = re.sub(r"\s+", "", base_name).lower()
             hit = None
             for s_norm, s_orig in known_norm_pairs:
                 if s_norm and s_norm in base_name_no_space:
@@ -404,8 +421,15 @@ def find_series_groups(filenames):
                 matched_files.add(file)
                 remaining_files.remove(file)
                 logger.info(f"优先阶段：文件 '{os.path.basename(file)}' 命中已知系列 '{hit}'（包含系列名）")
+        # 是否允许已知系列单文件成组
+        try:
+            from .utils import load_seriex_config as _load_cfg
+            _cfg = _load_cfg(None) or {}
+            allow_single = bool(_cfg.get("known_series_allow_single", True))
+        except Exception:
+            allow_single = True
         for series_name, files in matched_by_known.items():
-            if len(files) > 1:  # 与后续阶段一致，仅当系列内文件>1才建组
+            if len(files) > 1 or (allow_single and len(files) == 1):
                 series_groups[series_name].extend(files)
                 logger.info(f"优先阶段：将 {len(files)} 个文件加入已知系列 '{series_name}'")
     else:
@@ -819,13 +843,20 @@ def create_series_folders(directory_path, files, config, add_prefix: bool | None
             summary.setdefault(dir_path, {})
             
             # 首先创建所有需要的系列文件夹
+            # 读取单文件允许策略
+            allow_single = True
+            try:
+                allow_single = bool(load_seriex_config(None).get("known_series_allow_single", True))
+            except Exception:
+                allow_single = True
+
             for series_name, files in series_groups.items():
-                # 跳过"其他"分类和只有一个文件的系列
-                if series_name == "其他" or len(files) <= 1:
-                    if series_name == "其他":
-                        logger.warning(f"{len(files)} 个文件未能匹配到系列")
-                    else:
-                        logger.warning(f"系列 '{series_name}' 只有一个文件，跳过创建文件夹")
+                # 跳过"其他"分类；单文件仅在命中参考系列名且允许时创建
+                if series_name == "其他":
+                    logger.warning(f"{len(files)} 个文件未能匹配到系列")
+                    continue
+                if len(files) <= 1 and not (allow_single and _series_in_known_set(series_name)):
+                    logger.warning(f"系列 '{series_name}' 只有一个文件，且非参考系列或未启用单文件策略，跳过创建文件夹")
                     continue
                 
                 # 添加系列标记（使用配置前缀，或不添加）
@@ -889,8 +920,16 @@ def compute_series_plan(directory_path, files, config, add_prefix: bool | None =
         total_files = len(dir_archives)
         plan_for_dir: dict[str, list[str]] = {}
 
+        # 读取单文件允许策略
+        try:
+            allow_single = bool(load_seriex_config(None).get("known_series_allow_single", True))
+        except Exception:
+            allow_single = True
+
         for series_name, files_in_series in series_groups.items():
-            if series_name == "其他" or len(files_in_series) <= 1:
+            if series_name == "其他":
+                continue
+            if len(files_in_series) <= 1 and not (allow_single and _series_in_known_set(series_name)):
                 continue
             if len(files_in_series) == total_files:
                 # 全部文件同一系列，按原逻辑跳过创建子目录

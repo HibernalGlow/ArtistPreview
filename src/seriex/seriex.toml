@@ -25,3 +25,6 @@ add_prefix = true
 known_series_dirs = [
    "E:/1Hub/EH/[02COS]"
  ]
+
+# 命中参考系列名时，允许单文件也单独成组并创建文件夹（默认 true）
+known_series_allow_single = true

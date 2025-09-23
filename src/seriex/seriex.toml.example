@@ -20,3 +20,6 @@ archive_formats = ["zip", "rar", "7z", "cbz", "cbr"]
 #   "D:/Your/SeriesLibrary",
 #   "E:/Another/SeriesRoot"
 # ]
+
+# 命中参考系列名时，是否允许单文件也单独成组并创建文件夹（默认 true）
+# known_series_allow_single = true
