@@ -247,7 +247,7 @@ def interactive():
             cfg_path = p
     # 是否添加前缀
     add_prefix = None
-    if Confirm.ask("是否为系列文件夹添加前缀?", default=True):
+    if Confirm.ask("是否为系列文件夹添加前缀?", default=False):
         add_prefix = True
     else:
         add_prefix = False
