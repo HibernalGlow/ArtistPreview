@@ -117,6 +117,7 @@ def present_results(rows: list[str], keyword: str, as_table: bool, only_files: b
 
 
 DEFAULT_KEYWORDS_FILENAME = "lista_black_names.txt"
+DEFAULT_LISTFILE_NAME = "list.txt"
 
 @app.command("search")
 def search(
@@ -127,19 +128,27 @@ def search(
     content: bool = typer.Option(False, "--content/--no-content", help="是否扫描文本/小文件内容 (默认不扫描, 仅文件名)"),
     copy: bool = typer.Option(False, "--copy", help="复制结果绝对路径列表到剪贴板"),
     archives_only: bool = typer.Option(True, "--archives-only/--all-files", help="默认只匹配压缩包(.zip/.rar/.7z); 关闭以匹配所有文件"),
+    names_file: Path = typer.Option(None, "--names-file", "-n", help="指定包含文件名列表的文本文件 (每行一个文件名)"),
+    listfile: Path = typer.Option(None, "--listfile", "-l", help="指定包含完整文件路径列表的文本文件 (每行一个文件路径, 默认 list.txt)"),
 ):
-    # 关键词集合: keyword + 默认黑名单文件行
+    # 关键词集合: keyword + 指定文件或默认黑名单文件
     keywords: list[str] = []
     if keyword:
         keywords.append(keyword.strip())
-    kw_file = Path.cwd() / DEFAULT_KEYWORDS_FILENAME
+    
+    # 优先使用指定的文件名列表文件，否则使用默认黑名单文件
+    kw_file = names_file if names_file else Path.cwd() / DEFAULT_KEYWORDS_FILENAME
     if kw_file.exists():
         lines = [l.strip() for l in kw_file.read_text(encoding='utf-8', errors='ignore').splitlines() if l.strip()]
         for l in lines:
             if l not in keywords:
                 keywords.append(l)
+    elif not names_file:  # 只有当没有指定 names_file 时，才检查默认文件缺失
+        pass  # 如果指定了 names_file 但不存在，会在后面报错
+    
     if not keywords:
-        raise typer.BadParameter("没有可用关键词 (参数为空且缺少 lista_black_names.txt)")
+        file_desc = f"{names_file}" if names_file else DEFAULT_KEYWORDS_FILENAME
+        raise typer.BadParameter(f"没有可用关键词 (参数为空且缺少 {file_desc})")
 
     # 路径确定
     if clip:
@@ -157,36 +166,104 @@ def search(
     if not path.exists():
         raise typer.BadParameter(f"路径不存在: {path}")
 
+    # 获取要搜索的文件列表或文件名列表
+    file_items: list[str] = []  # 存储路径或文件名字符串
+    use_listfile_mode = False
+    
+    # 如果指定了 listfile 或存在默认的 list.txt，从文件中读取路径/文件名列表
+    list_file_to_use = listfile if listfile else (Path.cwd() / DEFAULT_LISTFILE_NAME)
+    if listfile or list_file_to_use.exists():
+        if not list_file_to_use.exists():
+            raise typer.BadParameter(f"文件列表不存在: {list_file_to_use}")
+        
+        use_listfile_mode = True
+        try:
+            lines = list_file_to_use.read_text(encoding='utf-8', errors='ignore').splitlines()
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                # 移除可能的引号
+                line = line.strip('"').strip("'")
+                file_items.append(line)
+        except Exception as e:
+            raise typer.BadParameter(f"读取文件列表失败: {e}")
+        
+        if not file_items:
+            console.print("[yellow]警告: 文件列表为空[/yellow]")
+            return
+
     # 直接文件名匹配; 可选内容匹配(需 --content)
     lowered = [k.lower() for k in keywords]
     results: list[str] = []
     archive_exts = {'.zip', '.rar', '.7z'}
-    for p in path.rglob('*'):
-        try:
-            if not p.is_file():
+    
+    if use_listfile_mode:
+        # listfile 模式：直接对文件名/路径字符串进行匹配
+        for item in file_items:
+            try:
+                # 提取文件名部分（可能是完整路径或单独文件名）
+                item_lower = item.lower()
+                # 获取文件名（如果是路径则取最后一部分）
+                filename = Path(item).name.lower()
+                
+                # 检查扩展名过滤
+                suffix = Path(item).suffix.lower()
+                if archives_only and suffix not in archive_exts:
+                    # 非归档文件：仅当需要内容扫描且开启 content 时才考虑
+                    if not (content and (suffix in {'.txt', '.md', '.json'})):
+                        continue
+                
+                # 文件名匹配
+                if include_name:
+                    if any(k in filename for k in lowered):
+                        results.append(item)
+                        continue
+                
+                # 内容匹配（仅当文件实际存在时）
+                if content:
+                    item_path = Path(item)
+                    if item_path.exists() and item_path.is_file():
+                        if item_path.suffix.lower() in {'.txt', '.md', '.json'} or item_path.stat().st_size < 512 * 1024:
+                            try:
+                                with item_path.open('r', encoding='utf-8', errors='ignore') as fh:
+                                    for line in fh:
+                                        llow = line.lower()
+                                        if any(k in llow for k in lowered):
+                                            results.append(item)
+                                            break
+                            except Exception:
+                                pass
+            except Exception:
                 continue
-            suffix = p.suffix.lower()
-            if archives_only and suffix not in archive_exts:
-                # 非归档文件：仅当需要内容扫描且开启 content 时才考虑 (例如某些文本 json)
-                if not (content and (suffix in {'.txt', '.md', '.json'})):
+    else:
+        # 传统 rglob 模式
+        for p in path.rglob('*'):
+            try:
+                if not p.is_file():
                     continue
-            name_l = p.name.lower()
-            name_hit = include_name and any(k in name_l for k in lowered)
-            if name_hit:
-                results.append(str(p))
+                suffix = p.suffix.lower()
+                if archives_only and suffix not in archive_exts:
+                    # 非归档文件：仅当需要内容扫描且开启 content 时才考虑 (例如某些文本 json)
+                    if not (content and (suffix in {'.txt', '.md', '.json'})):
+                        continue
+                name_l = p.name.lower()
+                name_hit = include_name and any(k in name_l for k in lowered)
+                if name_hit:
+                    results.append(str(p))
+                    continue
+                if content and (p.suffix.lower() in {'.txt', '.md', '.json'} or p.stat().st_size < 512 * 1024):
+                    try:
+                        with p.open('r', encoding='utf-8', errors='ignore') as fh:
+                            for line in fh:
+                                llow = line.lower()
+                                if any(k in llow for k in lowered):
+                                    results.append(str(p))
+                                    break
+                    except Exception:
+                        pass
+            except Exception:
                 continue
-            if content and (p.suffix.lower() in {'.txt', '.md', '.json'} or p.stat().st_size < 512 * 1024):
-                try:
-                    with p.open('r', encoding='utf-8', errors='ignore') as fh:
-                        for line in fh:
-                            llow = line.lower()
-                            if any(k in llow for k in lowered):
-                                results.append(str(p))
-                                break
-                except Exception:
-                    pass
-        except Exception:
-            continue
 
     # 去重 & 输出
     dedup = []
