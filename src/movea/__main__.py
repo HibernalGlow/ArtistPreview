@@ -150,7 +150,18 @@ def main():
         
         for level1_name in current_level1_names:
             data = scan_results[level1_name]
-            st.subheader(f"📁 {level1_name}")
+            
+            # 创建标题行：文件夹名 + 打开按钮
+            col_title, col_open = st.columns([0.8, 0.2])
+            with col_title:
+                st.subheader(f"📁 {level1_name}")
+            with col_open:
+                if st.button(f"打开", key=f"open_{level1_name}", help=f"在文件管理器中打开 {level1_name} 文件夹"):
+                    try:
+                        os.startfile(data['path'])  # Windows系统打开文件夹
+                        st.success(f"已打开文件夹: {level1_name}")
+                    except Exception as e:
+                        st.error(f"无法打开文件夹: {e}")
             
             level1_move_plan = {}
             
