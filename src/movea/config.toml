@@ -1,10 +1,20 @@
 [matching]
-# 优先匹配的关键词，如果文件夹名包含这些关键词，则优先选择
-priority_keywords = ["同人志"]
+priority_keywords = [
+    "同人志",
+]
+# 是否允许移动到无编号的二级文件夹
+allow_move_to_unnumbered = false
 
 [blacklist]
-# 黑名单文件夹名
 folders = [
     "[ALICESOFT]",
+    "[こわれもの (抹茶さま、mattya604)]",
+    "[ザンクロー]",
     "[JTveemo]",
+]
+
+[folder_templates]
+templates = [
+    "1. 同人志",
+    "2. 商业志",
 ]

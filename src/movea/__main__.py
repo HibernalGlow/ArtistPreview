@@ -73,23 +73,31 @@ def execute_single_folder(level1_name, data, archives_plan):
     success_count = 0
     error_count = 0
     
-    with st.spinner(f"正在移动 {level1_name} 的文件..."):
-        for archive, target_folder in archives_plan.items():
+    with st.spinner(f"正在移动 {level1_name} 的对象..."):
+        for item_key, target_folder in archives_plan.items():
             if target_folder is None:
                 continue  # 不移动
             
-            source_path = os.path.join(level1_path, archive)
-            target_path = os.path.join(level1_path, target_folder, archive)
+            # 检查是文件还是文件夹
+            if item_key.startswith("folder_"):
+                item_name = item_key[7:]  # 移除"folder_"前缀
+                item_type = "文件夹"
+            else:
+                item_name = item_key
+                item_type = "文件"
+            
+            source_path = os.path.join(level1_path, item_name)
+            target_path = os.path.join(level1_path, target_folder, item_name)
             
             try:
                 # 确保目标文件夹存在
                 os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                # 移动文件
+                # 移动文件或文件夹
                 shutil.move(source_path, target_path)
-                st.success(f"✅ {level1_name}/{archive} -> {target_folder}")
+                st.success(f"✅ {level1_name}/{item_name} ({item_type}) -> {target_folder}")
                 success_count += 1
             except Exception as e:
-                st.error(f"❌ 移动失败 {level1_name}/{archive}: {e}")
+                st.error(f"❌ 移动失败 {level1_name}/{item_name} ({item_type}): {e}")
                 error_count += 1
     
     if success_count > 0 or error_count > 0:
@@ -116,25 +124,33 @@ def execute_all_moves():
                 success_count = 0
                 error_count = 0
                 
-                for archive, target_folder in archives_plan.items():
+                for item_key, target_folder in archives_plan.items():
                     if target_folder is None:
                         continue
                     
-                    source_path = os.path.join(data['path'], archive)
-                    target_path = os.path.join(data['path'], target_folder, archive)
+                    # 检查是文件还是文件夹
+                    if item_key.startswith("folder_"):
+                        item_name = item_key[7:]  # 移除"folder_"前缀
+                        item_type = "文件夹"
+                    else:
+                        item_name = item_key
+                        item_type = "文件"
+                    
+                    source_path = os.path.join(data['path'], item_name)
+                    target_path = os.path.join(data['path'], target_folder, item_name)
                     
                     try:
                         os.makedirs(os.path.dirname(target_path), exist_ok=True)
                         shutil.move(source_path, target_path)
                         success_count += 1
                     except Exception as e:
-                        st.error(f"❌ 移动失败 {level1_name}/{archive}: {e}")
+                        st.error(f"❌ 移动失败 {level1_name}/{item_name} ({item_type}): {e}")
                         error_count += 1
                 
                 if success_count > 0:
-                    st.success(f"✅ {level1_name}: {success_count} 个文件移动成功")
+                    st.success(f"✅ {level1_name}: {success_count} 个对象移动成功")
                 if error_count > 0:
-                    st.error(f"❌ {level1_name}: {error_count} 个文件移动失败")
+                    st.error(f"❌ {level1_name}: {error_count} 个对象移动失败")
                 
                 total_success += success_count
                 total_error += error_count
@@ -176,25 +192,33 @@ def execute_current_page_moves():
                 success_count = 0
                 error_count = 0
                 
-                for archive, target_folder in archives_plan.items():
+                for item_key, target_folder in archives_plan.items():
                     if target_folder is None:
                         continue
                     
-                    source_path = os.path.join(data['path'], archive)
-                    target_path = os.path.join(data['path'], target_folder, archive)
+                    # 检查是文件还是文件夹
+                    if item_key.startswith("folder_"):
+                        item_name = item_key[7:]  # 移除"folder_"前缀
+                        item_type = "文件夹"
+                    else:
+                        item_name = item_key
+                        item_type = "文件"
+                    
+                    source_path = os.path.join(data['path'], item_name)
+                    target_path = os.path.join(data['path'], target_folder, item_name)
                     
                     try:
                         os.makedirs(os.path.dirname(target_path), exist_ok=True)
                         shutil.move(source_path, target_path)
                         success_count += 1
                     except Exception as e:
-                        st.error(f"❌ 移动失败 {level1_name}/{archive}: {e}")
+                        st.error(f"❌ 移动失败 {level1_name}/{item_name} ({item_type}): {e}")
                         error_count += 1
                 
                 if success_count > 0:
-                    st.success(f"✅ {level1_name}: {success_count} 个文件移动成功")
+                    st.success(f"✅ {level1_name}: {success_count} 个对象移动成功")
                 if error_count > 0:
-                    st.error(f"❌ {level1_name}: {error_count} 个文件移动失败")
+                    st.error(f"❌ {level1_name}: {error_count} 个对象移动失败")
                 
                 total_success += success_count
                 total_error += error_count
@@ -210,6 +234,75 @@ def execute_current_page_moves():
             updated_scan_results = scan_directory(st.session_state.root_path)
             st.session_state.scan_results = updated_scan_results
             # 清空移动计划，因为文件位置已改变
+            st.session_state.move_plan = {}
+        st.success("重新扫描完成！")
+
+def create_folders_for_level1(level1_name, data, templates):
+    """为指定的一级文件夹创建子文件夹"""
+    level1_path = data['path']
+    created_count = 0
+    skipped_count = 0
+    
+    for template in templates:
+        folder_path = os.path.join(level1_path, template)
+        try:
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path, exist_ok=True)
+                created_count += 1
+            else:
+                skipped_count += 1
+        except Exception as e:
+            st.error(f"创建文件夹失败 {level1_name}/{template}: {e}")
+    
+    if created_count > 0:
+        st.success(f"✅ {level1_name}: 成功创建 {created_count} 个文件夹")
+    if skipped_count > 0:
+        st.info(f"⏭️ {level1_name}: 跳过 {skipped_count} 个已存在的文件夹")
+    
+    # 重新扫描目录以更新显示
+    if 'root_path' in st.session_state:
+        with st.spinner("正在重新扫描目录..."):
+            updated_scan_results = scan_directory(st.session_state.root_path)
+            st.session_state.scan_results = updated_scan_results
+            # 清空移动计划，因为文件夹结构已改变
+            st.session_state.move_plan = {}
+        st.success("重新扫描完成！")
+
+def create_folders_for_all(templates):
+    """为所有一级文件夹创建指定的子文件夹"""
+    if 'scan_results' not in st.session_state:
+        st.error("没有扫描结果")
+        return
+    
+    scan_results = st.session_state.scan_results
+    total_created = 0
+    total_skipped = 0
+    
+    with st.spinner("正在创建文件夹..."):
+        for level1_name, data in scan_results.items():
+            level1_path = data['path']
+            for template in templates:
+                folder_path = os.path.join(level1_path, template)
+                try:
+                    if not os.path.exists(folder_path):
+                        os.makedirs(folder_path, exist_ok=True)
+                        total_created += 1
+                    else:
+                        total_skipped += 1
+                except Exception as e:
+                    st.error(f"创建文件夹失败 {level1_name}/{template}: {e}")
+    
+    if total_created > 0:
+        st.success(f"成功创建 {total_created} 个文件夹")
+    if total_skipped > 0:
+        st.info(f"跳过 {total_skipped} 个已存在的文件夹")
+    
+    # 重新扫描目录以更新显示
+    if 'root_path' in st.session_state:
+        with st.spinner("正在重新扫描目录..."):
+            updated_scan_results = scan_directory(st.session_state.root_path)
+            st.session_state.scan_results = updated_scan_results
+            # 清空移动计划，因为文件夹结构已改变
             st.session_state.move_plan = {}
         st.success("重新扫描完成！")
 
@@ -236,9 +329,10 @@ def scan_directory(root_path):
                 if item in blacklist:
                     continue
                     
-                # 获取二级文件夹和压缩包
+                # 获取二级文件夹、压缩包和可移动文件夹
                 subfolders = []
                 archives = []
+                movable_folders = []
                 for subitem in os.listdir(level1_path):
                     subitem_path = os.path.join(level1_path, subitem)
                     if os.path.isdir(subitem_path):
@@ -246,18 +340,35 @@ def scan_directory(root_path):
                     elif os.path.isfile(subitem_path) and is_archive(subitem_path):
                         archives.append(subitem)
                 
-                if archives and subfolders:  # 只处理有压缩包且有二级文件夹的一级文件夹
+                # 可移动的文件夹：一级文件夹下的文件夹，但排除已存在的二级文件夹
+                # 实际上，当前所有文件夹都在subfolders中，我们需要区分哪些是真正的二级文件夹，哪些是可移动的文件夹
+                # 暂时先收集所有非二级文件夹的文件夹作为可移动对象
+                # 这里先简化：如果有二级文件夹，则可移动文件夹就是除了二级文件夹外的其他文件夹
+                # 但实际上，现在所有文件夹都被当作二级文件夹了
+                
+                # 为了简化，我们添加一个逻辑：文件夹如果不匹配任何模式，就认为是可移动的
+                # 或者，我们可以修改逻辑，让用户指定哪些是真正的分类文件夹
+                
+                # 暂时先添加一个简单的逻辑：如果文件夹名不包含数字前缀，就认为是可移动的文件夹
+                movable_folders = []
+                for folder in subfolders[:]:  # 复制一份
+                    if not re.match(r'^\d+[\.\)\]\s]*', folder):  # 如果不是以数字开头的
+                        movable_folders.append(folder)
+                        subfolders.remove(folder)  # 从二级文件夹中移除
+                
+                if (archives or movable_folders) and subfolders:  # 有可移动对象且有目标文件夹
                     results[item] = {
                         'path': level1_path,
                         'subfolders': sorted(subfolders),  # 排序二级文件夹
-                        'archives': archives
+                        'archives': archives,
+                        'movable_folders': movable_folders
                     }
     except Exception as e:
         st.error(f"扫描目录时出错: {e}")
     
     return results
 
-def match_archive_to_folder(archive_name, subfolders, regex_patterns):
+def match_archive_to_folder(archive_name, subfolders, regex_patterns, allow_move_to_unnumbered=False):
     """使用正则匹配压缩包到二级文件夹，优先选择包含关键词的文件夹"""
     config = load_config()
     priority_keywords = config.get('matching', {}).get('priority_keywords', [])
@@ -272,6 +383,30 @@ def match_archive_to_folder(archive_name, subfolders, regex_patterns):
                     break  # 找到匹配就停止
             except re.error:
                 continue  # 忽略无效的正则表达式
+    
+    # 如果允许移动到无编号文件夹，添加没有编号的文件夹（但排除自身）
+    if allow_move_to_unnumbered:
+        # 定义编号模式
+        number_patterns = [
+            r'^\d+\.\s*',  # "1. ", "01. " 等
+            r'^\(\d+\)\s*',  # "(1) ", "(01) " 等
+            r'^\[\d+\]\s*',  # "[1] ", "[01] " 等
+        ]
+        
+        unnumbered_folders = []
+        for folder in subfolders:
+            has_number = False
+            for pattern in number_patterns:
+                if re.match(pattern, folder):
+                    has_number = True
+                    break
+            if not has_number:
+                unnumbered_folders.append(folder)
+        
+        # 将无编号文件夹添加到匹配列表，但不包括已经在matched_folders中的
+        for folder in unnumbered_folders:
+            if folder not in matched_folders:
+                matched_folders.append(folder)
     
     if not matched_folders:
         return []
@@ -349,6 +484,17 @@ def main():
         st.subheader("显示选项")
         show_full_names = st.checkbox("显示完整文件夹名", value=True, help="显示二级文件夹的完整名称，包括编号等前缀")
         items_per_page = st.selectbox("每页显示文件夹数", options=[3, 5, 10, 15, 20], index=1, help="选择每页显示的一级文件夹数量")
+        
+        # 移动选项
+        st.subheader("移动选项")
+        config = load_config()
+        allow_move_to_unnumbered = st.checkbox(
+            "允许无编号二级文件夹作为目标", 
+            value=config.get('matching', {}).get('allow_move_to_unnumbered', False),
+            help="允许将压缩包移动到没有编号前缀的二级文件夹（如'汉化'而不是'1. 汉化'）"
+        )
+        # 保存设置到session_state
+        st.session_state.allow_move_to_unnumbered = allow_move_to_unnumbered
         
         # 黑名单管理
         st.subheader("黑名单管理")
@@ -460,6 +606,25 @@ def main():
                     # 执行单个文件夹的移动
                     execute_single_folder(level1_name, data, level1_move_plan)
             
+            # 快速创建文件夹
+            config = load_config()
+            folder_templates = config.get('folder_templates', {}).get('templates', [])
+            if folder_templates:
+                with st.expander(f"📁 为 {level1_name} 创建子文件夹", expanded=False):
+                    selected_templates = []
+                    cols = st.columns(3)  # 每行3个复选框
+                    for i, template in enumerate(folder_templates):
+                        col_idx = i % 3
+                        with cols[col_idx]:
+                            if st.checkbox(f"{template}", key=f"create_{level1_name}_{template}"):
+                                selected_templates.append(template)
+                    
+                    if st.button(f"创建选中文件夹", key=f"create_btn_{level1_name}", help=f"为 {level1_name} 创建选中的子文件夹"):
+                        if selected_templates:
+                            create_folders_for_level1(level1_name, data, selected_templates)
+                        else:
+                            st.warning("请先选择要创建的文件夹")
+            
             # 全选勾选框
             skip_all = st.checkbox(f"跳过 {level1_name} 的所有文件", key=f"skip_all_{level1_name}", 
                                  help=f"取消移动 {level1_name} 文件夹下的所有压缩包")
@@ -468,7 +633,8 @@ def main():
             
             for archive in data['archives']:
                 # 匹配建议的文件夹
-                matched_folders = match_archive_to_folder(archive, data['subfolders'], regex_patterns)
+                matched_folders = match_archive_to_folder(archive, data['subfolders'], regex_patterns, 
+                                                   st.session_state.get('allow_move_to_unnumbered', False))
                 
                 # 默认选择：优先选择包含关键词的文件夹
                 default_folder = matched_folders[0] if matched_folders else (data['subfolders'][0] if data['subfolders'] else None)
@@ -535,6 +701,72 @@ def main():
             
             move_plan[level1_name] = level1_move_plan
             
+            # 处理可移动的文件夹
+            if 'movable_folders' in data and data['movable_folders']:
+                st.subheader(f"📁 可移动的文件夹 ({len(data['movable_folders'])} 个)")
+                
+                for folder in data['movable_folders']:
+                    # 为文件夹匹配目标文件夹（使用文件夹名作为匹配依据）
+                    matched_folders = match_archive_to_folder(folder, data['subfolders'], regex_patterns, 
+                                                       st.session_state.get('allow_move_to_unnumbered', False))
+                    
+                    # 默认选择
+                    default_folder = matched_folders[0] if matched_folders else (data['subfolders'][0] if data['subfolders'] else None)
+                    
+                    # 创建列布局：勾选框 | 文件夹名 | 目标选择
+                    col1, col2, col3 = st.columns([0.1, 0.4, 0.5])
+                    
+                    with col1:
+                        # 勾选框：是否移动
+                        move_enabled = st.checkbox(
+                            f"移动文件夹 {folder}",
+                            value=bool(default_folder),
+                            key=f"move_folder_{level1_name}_{folder}",
+                            label_visibility="collapsed"
+                        )
+                    
+                    with col2:
+                        st.write(f"**📁 {folder}**")
+                    
+                    with col3:
+                        if move_enabled and data['subfolders']:
+                            # 选择目标文件夹
+                            if show_full_names:
+                                selected_folder = st.radio(
+                                    f"选择目标文件夹 ({folder})",
+                                    options=data['subfolders'],
+                                    index=data['subfolders'].index(default_folder) if default_folder and default_folder in data['subfolders'] else 0,
+                                    key=f"target_folder_{level1_name}_{folder}",
+                                    label_visibility="collapsed",
+                                    format_func=lambda x: f"📁 {x}"
+                                )
+                            else:
+                                # 简化显示
+                                def simplify_name(full_name):
+                                    simplified = re.sub(r'^\d+\.\s*', '', full_name)
+                                    simplified = re.sub(r'^\(\d+\)\s*', '', simplified)
+                                    simplified = re.sub(r'^\[\d+\]\s*', '', simplified)
+                                    return simplified if simplified != full_name else full_name
+                                
+                                simplified_options = [simplify_name(name) for name in data['subfolders']]
+                                selected_idx = data['subfolders'].index(default_folder) if default_folder and default_folder in data['subfolders'] else 0
+                                
+                                selected_simplified = st.radio(
+                                    f"选择目标文件夹 ({folder})",
+                                    options=simplified_options,
+                                    index=selected_idx,
+                                    key=f"target_folder_{level1_name}_{folder}",
+                                    label_visibility="collapsed",
+                                    format_func=lambda x: f"📁 {x}"
+                                )
+                                
+                                selected_folder = data['subfolders'][simplified_options.index(selected_simplified)]
+                            
+                            level1_move_plan[f"folder_{folder}"] = selected_folder
+                        else:
+                            st.write("不移动")
+                            level1_move_plan[f"folder_{folder}"] = None
+            
             st.divider()
         
         # 存储移动计划（只存储当前页的）
@@ -559,9 +791,10 @@ def main():
         
         # 统计信息（基于所有文件夹）
         total_archives = sum(len(data['archives']) for data in scan_results.values())
+        total_movable_folders = sum(len(data.get('movable_folders', [])) for data in scan_results.values())
         move_count = sum(1 for plans in st.session_state.move_plan.values() for plan in plans.values() if plan is not None)
         
-        st.info(f"总压缩包数量: {total_archives} | 计划移动: {move_count}")
+        st.info(f"总压缩包: {total_archives} | 可移动文件夹: {total_movable_folders} | 计划移动: {move_count}")
         
         # 分页导航（底部）
         if total_pages > 1:
