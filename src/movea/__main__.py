@@ -18,6 +18,14 @@ else:
 
 def main():
     """主函数"""
+    # 设置页面配置
+    st.set_page_config(
+        page_title="压缩包分类移动工具",
+        page_icon="📦",
+        layout="wide",  # 开启宽屏模式
+        initial_sidebar_state="expanded"
+    )
+
     st.title("压缩包分类移动工具")
 
     # 渲染侧边栏并获取配置
