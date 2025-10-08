@@ -33,6 +33,7 @@ dependencies = [
     "rapidfuzz>=3.6.0",
     "diff-match-patch>=20230430",
     "hanziconv>=0.3.2",
+    "streamlit",
 ]
 
 [project.urls]
@@ -50,6 +51,7 @@ crashp = "crashp.cli:main"
 searcha = "searcha.cli:main_entry"
 seriex = "seriex.cli:app"
 seex = "seriex.cli:app"
+archive_mover = "streamlit_archive_mover:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
