@@ -34,6 +34,8 @@ dependencies = [
     "diff-match-patch>=20230430",
     "hanziconv>=0.3.2",
     "streamlit",
+    "tomli>=2.0.0; python_version < '3.11'",
+    "tomli-w>=1.0.0",
 ]
 
 [project.urls]

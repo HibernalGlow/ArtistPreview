@@ -4,8 +4,52 @@ import shutil
 import re
 from pathlib import Path
 
+try:
+    import tomllib  # Python 3.11+
+except ImportError:
+    import tomli as tomllib
+
+import tomli_w
+
 # 支持的压缩包扩展名
 ARCHIVE_EXTENSIONS = {'.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz'}
+
+# 黑名单文件路径
+BLACKLIST_FILE = Path(__file__).parent / "blacklist.toml"
+
+def load_blacklist():
+    """加载黑名单"""
+    if BLACKLIST_FILE.exists():
+        try:
+            with open(BLACKLIST_FILE, 'rb') as f:
+                data = tomllib.load(f)
+                return set(data.get('blacklist', []))
+        except Exception as e:
+            st.error(f"加载黑名单失败: {e}")
+    return set()
+
+def save_blacklist(blacklist):
+    """保存黑名单"""
+    try:
+        data = {'blacklist': list(blacklist)}
+        with open(BLACKLIST_FILE, 'wb') as f:
+            tomli_w.dump(data, f)
+        return True
+    except Exception as e:
+        st.error(f"保存黑名单失败: {e}")
+        return False
+
+def add_to_blacklist(folder_name):
+    """添加文件夹到黑名单"""
+    blacklist = load_blacklist()
+    if folder_name not in blacklist:
+        blacklist.add(folder_name)
+        if save_blacklist(blacklist):
+            st.success(f"已将 '{folder_name}' 添加到黑名单")
+            return True
+    else:
+        st.warning(f"'{folder_name}' 已在黑名单中")
+    return False
 
 def is_archive(file_path):
     """检查文件是否是压缩包"""
@@ -17,12 +61,19 @@ def scan_directory(root_path):
         st.error(f"路径不存在: {root_path}")
         return {}
     
+    # 加载黑名单
+    blacklist = load_blacklist()
+    
     results = {}
     try:
         # 获取一级文件夹
         for item in os.listdir(root_path):
             level1_path = os.path.join(root_path, item)
             if os.path.isdir(level1_path):
+                # 跳过黑名单中的文件夹
+                if item in blacklist:
+                    continue
+                    
                 # 获取二级文件夹和压缩包
                 subfolders = []
                 archives = []
@@ -88,6 +139,24 @@ def main():
         st.subheader("显示选项")
         show_full_names = st.checkbox("显示完整文件夹名", value=True, help="显示二级文件夹的完整名称，包括编号等前缀")
         items_per_page = st.selectbox("每页显示文件夹数", options=[3, 5, 10, 15, 20], index=1, help="选择每页显示的一级文件夹数量")
+        
+        # 黑名单管理
+        st.subheader("黑名单管理")
+        blacklist = load_blacklist()
+        if blacklist:
+            st.write("当前黑名单:")
+            for item in sorted(blacklist):
+                col1, col2 = st.columns([0.8, 0.2])
+                with col1:
+                    st.write(f"• {item}")
+                with col2:
+                    if st.button(f"移除", key=f"remove_{item}", help=f"从黑名单中移除 {item}"):
+                        blacklist.discard(item)
+                        if save_blacklist(blacklist):
+                            st.success(f"已从黑名单移除 '{item}'")
+                            st.rerun()  # 重新运行以更新显示
+        else:
+            st.write("黑名单为空")
     
     # 主界面
     if scan_button:
@@ -126,19 +195,19 @@ def main():
         # 计算总页数
         total_pages = (total_folders + items_per_page - 1) // items_per_page
         
-        # 页码选择器
-        if total_pages > 1:
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                current_page = st.selectbox(
-                    "选择页码",
-                    options=list(range(1, total_pages + 1)),
-                    index=0,
-                    format_func=lambda x: f"第 {x} 页 / 共 {total_pages} 页",
-                    key="page_selector"
-                ) - 1  # 转换为0-based索引
-        else:
+        # 初始化当前页码（如果不存在）
+        if 'current_page' not in st.session_state:
+            st.session_state.current_page = 0
+        
+        current_page = st.session_state.current_page
+        
+        # 确保页码在有效范围内
+        if current_page >= total_pages:
+            current_page = total_pages - 1
+            st.session_state.current_page = current_page
+        if current_page < 0:
             current_page = 0
+            st.session_state.current_page = current_page
         
         # 获取当前页的一级文件夹
         start_idx = current_page * items_per_page
@@ -151,8 +220,8 @@ def main():
         for level1_name in current_level1_names:
             data = scan_results[level1_name]
             
-            # 创建标题行：文件夹名 + 打开按钮
-            col_title, col_open = st.columns([0.8, 0.2])
+            # 创建标题行：文件夹名 + 按钮组
+            col_title, col_open, col_blacklist = st.columns([0.6, 0.2, 0.2])
             with col_title:
                 st.subheader(f"📁 {level1_name}")
             with col_open:
@@ -162,6 +231,13 @@ def main():
                         st.success(f"已打开文件夹: {level1_name}")
                     except Exception as e:
                         st.error(f"无法打开文件夹: {e}")
+            with col_blacklist:
+                if st.button(f"黑名单", key=f"blacklist_{level1_name}", help=f"将 {level1_name} 添加到黑名单"):
+                    add_to_blacklist(level1_name)
+            
+            # 全选勾选框
+            skip_all = st.checkbox(f"跳过 {level1_name} 的所有文件", key=f"skip_all_{level1_name}", 
+                                 help=f"取消移动 {level1_name} 文件夹下的所有压缩包")
             
             level1_move_plan = {}
             
@@ -172,6 +248,9 @@ def main():
                 # 默认选择：排序后的第一个匹配文件夹
                 default_folder = sorted(matched_folders)[0] if matched_folders else (data['subfolders'][0] if data['subfolders'] else None)
                 
+                # 如果全选跳过，则默认不移动
+                move_default = bool(default_folder) and not skip_all
+                
                 # 创建列布局：勾选框 | 文件名 | 目标选择
                 col1, col2, col3 = st.columns([0.1, 0.4, 0.5])
                 
@@ -179,7 +258,7 @@ def main():
                     # 勾选框：是否移动
                     move_enabled = st.checkbox(
                         "",
-                        value=bool(default_folder),
+                        value=move_default,
                         key=f"move_{level1_name}_{archive}"
                     )
                 
@@ -240,6 +319,8 @@ def main():
         # 显示分页信息
         if total_pages > 1:
             st.write(f"显示第 {start_idx + 1}-{end_idx} 个文件夹，共 {total_folders} 个")
+        else:
+            st.write(f"共 {total_folders} 个文件夹")
         
         # 统计信息（基于所有文件夹）
         total_archives = sum(len(data['archives']) for data in scan_results.values())
@@ -254,60 +335,51 @@ def main():
         with col2:
             execute_current_page = st.button("只对本页执行移动", help="只移动当前页面的文件")
         
-        # 处理移动执行
-        if execute_all or execute_current_page:
-            if not st.session_state.move_plan:
-                st.error("没有移动计划")
-                return
+        # 分页导航（底部）
+        if total_pages > 1:
+            st.markdown("---")
+            col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
             
-            # 确定要执行的移动计划
-            if execute_current_page:
-                # 只执行当前页的移动计划
-                current_page_move_plan = {level1_name: st.session_state.move_plan.get(level1_name, {}) 
-                                        for level1_name in current_level1_names}
-                move_plan_to_execute = current_page_move_plan
-                execution_scope = f"当前页面 ({len(current_level1_names)} 个文件夹)"
-            else:
-                # 执行所有页面的移动计划
-                move_plan_to_execute = st.session_state.move_plan
-                execution_scope = "所有页面"
+            with col1:
+                if st.button("⏮️ 首页", key="first_page", disabled=(current_page == 0)):
+                    st.session_state.current_page = 0
+                    st.rerun()
             
-            with st.spinner(f"正在执行移动 ({execution_scope})..."):
-                success_count = 0
-                error_count = 0
-                
-                for level1_name, archives_plan in move_plan_to_execute.items():
-                    if level1_name not in scan_results:
-                        continue
-                    level1_path = scan_results[level1_name]['path']
-                    
-                    for archive, target_folder in archives_plan.items():
-                        if target_folder is None:
-                            continue  # 不移动
-                        
-                        source_path = os.path.join(level1_path, archive)
-                        target_path = os.path.join(level1_path, target_folder, archive)
-                        
-                        try:
-                            # 确保目标文件夹存在
-                            os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                            # 移动文件
-                            shutil.move(source_path, target_path)
-                            st.success(f"✅ {level1_name}/{archive} -> {target_folder}")
-                            success_count += 1
-                        except Exception as e:
-                            st.error(f"❌ 移动失败 {level1_name}/{archive}: {e}")
-                            error_count += 1
-                
-                st.success(f"移动完成 ({execution_scope})! 成功: {success_count}, 失败: {error_count}")
-                
-                if execute_all:
-                    # 只有执行全部时才清除session_state
-                    del st.session_state.scan_results
-                    del st.session_state.move_plan
-                    del st.session_state.regex_patterns
-                    del st.session_state.show_full_names
-                    del st.session_state.items_per_page
+            with col2:
+                if st.button("⬅️ 上一页", key="prev_page", disabled=(current_page == 0)):
+                    st.session_state.current_page = current_page - 1
+                    st.rerun()
+            
+            with col3:
+                st.markdown(f"<center><strong>第 {current_page + 1} 页 / 共 {total_pages} 页</strong></center>", 
+                          unsafe_allow_html=True)
+                # 页码跳转
+                jump_page = st.number_input(
+                    "跳转到页码",
+                    min_value=1,
+                    max_value=total_pages,
+                    value=current_page + 1,
+                    step=1,
+                    key="jump_page_input"
+                )
+                if st.button("跳转", key="jump_button"):
+                    if 1 <= jump_page <= total_pages:
+                        st.session_state.current_page = jump_page - 1
+                        st.rerun()
+            
+            with col4:
+                if st.button("下一页 ➡️", key="next_page", disabled=(current_page >= total_pages - 1)):
+                    st.session_state.current_page = current_page + 1
+                    st.rerun()
+            
+            with col5:
+                if st.button("末页 ⏭️", key="last_page", disabled=(current_page >= total_pages - 1)):
+                    st.session_state.current_page = total_pages - 1
+                    st.rerun()
+            
+            st.markdown("---")
+        
+            st.markdown("---")
 
 if __name__ == "__main__":
     main()
