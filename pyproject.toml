@@ -51,13 +51,13 @@ crashp = "crashp.cli:main"
 searcha = "searcha.cli:main_entry"
 seriex = "seriex.cli:app"
 seex = "seriex.cli:app"
-archive_mover = "streamlit_archive_mover:main"
+movea = "movea.__main__:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["previewa*","lista*","searcha*","samea*","crashu*","crashp*","linedup*","seriex*"]
+include = ["previewa*","lista*","searcha*","samea*","crashu*","crashp*","linedup*","seriex*","movea*"]
 exclude = ["*.tests", "*.tests.*", "tests.*", "tests"]
 
 [tool.setuptools.package-data]
