@@ -51,6 +51,156 @@ def add_to_blacklist(folder_name):
         st.warning(f"'{folder_name}' 已在黑名单中")
     return False
 
+def execute_single_folder(level1_name, data, archives_plan):
+    """执行单个文件夹的移动"""
+    if not archives_plan:
+        st.warning(f"{level1_name} 没有移动计划")
+        return
+    
+    level1_path = data['path']
+    success_count = 0
+    error_count = 0
+    
+    with st.spinner(f"正在移动 {level1_name} 的文件..."):
+        for archive, target_folder in archives_plan.items():
+            if target_folder is None:
+                continue  # 不移动
+            
+            source_path = os.path.join(level1_path, archive)
+            target_path = os.path.join(level1_path, target_folder, archive)
+            
+            try:
+                # 确保目标文件夹存在
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                # 移动文件
+                shutil.move(source_path, target_path)
+                st.success(f"✅ {level1_name}/{archive} -> {target_folder}")
+                success_count += 1
+            except Exception as e:
+                st.error(f"❌ 移动失败 {level1_name}/{archive}: {e}")
+                error_count += 1
+    
+    if success_count > 0 or error_count > 0:
+        st.info(f"{level1_name} 移动完成! 成功: {success_count}, 失败: {error_count}")
+    
+    # 移动完成后，更新移动计划，移除已完成的文件夹
+    if level1_name in st.session_state.move_plan:
+        del st.session_state.move_plan[level1_name]
+
+def execute_all_moves():
+    """执行所有文件夹的移动"""
+    if 'move_plan' not in st.session_state or not st.session_state.move_plan:
+        st.warning("没有移动计划")
+        return
+    
+    scan_results = st.session_state.scan_results
+    total_success = 0
+    total_error = 0
+    
+    with st.spinner("正在执行所有移动..."):
+        for level1_name, archives_plan in st.session_state.move_plan.items():
+            if level1_name in scan_results:
+                data = scan_results[level1_name]
+                success_count = 0
+                error_count = 0
+                
+                for archive, target_folder in archives_plan.items():
+                    if target_folder is None:
+                        continue
+                    
+                    source_path = os.path.join(data['path'], archive)
+                    target_path = os.path.join(data['path'], target_folder, archive)
+                    
+                    try:
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        shutil.move(source_path, target_path)
+                        success_count += 1
+                    except Exception as e:
+                        st.error(f"❌ 移动失败 {level1_name}/{archive}: {e}")
+                        error_count += 1
+                
+                if success_count > 0:
+                    st.success(f"✅ {level1_name}: {success_count} 个文件移动成功")
+                if error_count > 0:
+                    st.error(f"❌ {level1_name}: {error_count} 个文件移动失败")
+                
+                total_success += success_count
+                total_error += error_count
+    
+    st.info(f"全部移动完成! 总成功: {total_success}, 总失败: {total_error}")
+    # 清空移动计划
+    st.session_state.move_plan = {}
+    
+    # 重新扫描目录以更新显示
+    if 'root_path' in st.session_state:
+        with st.spinner("正在重新扫描目录..."):
+            updated_scan_results = scan_directory(st.session_state.root_path)
+            st.session_state.scan_results = updated_scan_results
+        st.success("重新扫描完成！")
+
+def execute_current_page_moves():
+    """执行当前页面的移动"""
+    if 'move_plan' not in st.session_state or not st.session_state.move_plan:
+        st.warning("没有移动计划")
+        return
+    
+    scan_results = st.session_state.scan_results
+    items_per_page = st.session_state.get('items_per_page', 5)
+    current_page = st.session_state.get('current_page', 0)
+    
+    level1_names = list(scan_results.keys())
+    start_idx = current_page * items_per_page
+    end_idx = min(start_idx + items_per_page, len(level1_names))
+    current_level1_names = level1_names[start_idx:end_idx]
+    
+    total_success = 0
+    total_error = 0
+    
+    with st.spinner("正在执行当前页面移动..."):
+        for level1_name in current_level1_names:
+            if level1_name in st.session_state.move_plan:
+                archives_plan = st.session_state.move_plan[level1_name]
+                data = scan_results[level1_name]
+                success_count = 0
+                error_count = 0
+                
+                for archive, target_folder in archives_plan.items():
+                    if target_folder is None:
+                        continue
+                    
+                    source_path = os.path.join(data['path'], archive)
+                    target_path = os.path.join(data['path'], target_folder, archive)
+                    
+                    try:
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        shutil.move(source_path, target_path)
+                        success_count += 1
+                    except Exception as e:
+                        st.error(f"❌ 移动失败 {level1_name}/{archive}: {e}")
+                        error_count += 1
+                
+                if success_count > 0:
+                    st.success(f"✅ {level1_name}: {success_count} 个文件移动成功")
+                if error_count > 0:
+                    st.error(f"❌ {level1_name}: {error_count} 个文件移动失败")
+                
+                total_success += success_count
+                total_error += error_count
+                
+                # 移除已完成的文件夹
+                del st.session_state.move_plan[level1_name]
+    
+    st.info(f"当前页面移动完成! 总成功: {total_success}, 总失败: {total_error}")
+    
+    # 重新扫描目录以更新显示
+    if 'root_path' in st.session_state:
+        with st.spinner("正在重新扫描目录..."):
+            updated_scan_results = scan_directory(st.session_state.root_path)
+            st.session_state.scan_results = updated_scan_results
+            # 清空移动计划，因为文件位置已改变
+            st.session_state.move_plan = {}
+        st.success("重新扫描完成！")
+
 def is_archive(file_path):
     """检查文件是否是压缩包"""
     return Path(file_path).suffix.lower() in ARCHIVE_EXTENSIONS
@@ -115,6 +265,34 @@ def main():
     with st.sidebar:
         st.header("配置")
         
+        # 执行操作
+        st.subheader("执行操作")
+        if 'scan_results' in st.session_state:
+            # 初始化确认状态
+            if 'confirm_all' not in st.session_state:
+                st.session_state.confirm_all = False
+            
+            if not st.session_state.confirm_all:
+                if st.button("确认执行移动", type="primary", help="移动所有页面的文件"):
+                    st.session_state.confirm_all = True
+                    st.rerun()
+            else:
+                st.warning("⚠️ 确定要移动所有文件吗？这将影响所有页面！")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ 确认执行", type="primary"):
+                        st.session_state.execute_all = True
+                        st.session_state.confirm_all = False
+                        st.rerun()
+                with col2:
+                    if st.button("❌ 取消"):
+                        st.session_state.confirm_all = False
+                        st.rerun()
+            
+            if st.button("只对本页执行移动", help="只移动当前页面的文件"):
+                st.session_state.execute_current_page = True
+                st.rerun()
+    
         # 用户输入根路径
         root_path = st.text_input("输入根路径:", value=r"E:\1Hub\EH\1EHV", placeholder="例如: D:\\Manga\\Artists")
         
@@ -157,7 +335,6 @@ def main():
                             st.rerun()  # 重新运行以更新显示
         else:
             st.write("黑名单为空")
-    
     # 主界面
     if scan_button:
         if not root_path:
@@ -173,6 +350,7 @@ def main():
         
         # 存储扫描结果在session_state
         st.session_state.scan_results = scan_results
+        st.session_state.root_path = root_path
         st.session_state.regex_patterns = regex_patterns
         st.session_state.show_full_names = show_full_names
         st.session_state.items_per_page = items_per_page
@@ -221,7 +399,7 @@ def main():
             data = scan_results[level1_name]
             
             # 创建标题行：文件夹名 + 按钮组
-            col_title, col_open, col_blacklist = st.columns([0.6, 0.2, 0.2])
+            col_title, col_open, col_blacklist, col_execute = st.columns([0.45, 0.15, 0.15, 0.25])
             with col_title:
                 st.subheader(f"📁 {level1_name}")
             with col_open:
@@ -234,6 +412,10 @@ def main():
             with col_blacklist:
                 if st.button(f"黑名单", key=f"blacklist_{level1_name}", help=f"将 {level1_name} 添加到黑名单"):
                     add_to_blacklist(level1_name)
+            with col_execute:
+                if st.button(f"执行移动", key=f"execute_{level1_name}", help=f"只移动 {level1_name} 文件夹下的文件"):
+                    # 执行单个文件夹的移动
+                    execute_single_folder(level1_name, data, level1_move_plan)
             
             # 全选勾选框
             skip_all = st.checkbox(f"跳过 {level1_name} 的所有文件", key=f"skip_all_{level1_name}", 
@@ -257,9 +439,10 @@ def main():
                 with col1:
                     # 勾选框：是否移动
                     move_enabled = st.checkbox(
-                        "",
+                        f"移动 {archive}",
                         value=move_default,
-                        key=f"move_{level1_name}_{archive}"
+                        key=f"move_{level1_name}_{archive}",
+                        label_visibility="collapsed"
                     )
                 
                 with col2:
@@ -322,18 +505,20 @@ def main():
         else:
             st.write(f"共 {total_folders} 个文件夹")
         
+        # 检查执行标志并执行移动
+        if 'execute_all' in st.session_state and st.session_state.execute_all:
+            execute_all_moves()
+            del st.session_state.execute_all
+        
+        if 'execute_current_page' in st.session_state and st.session_state.execute_current_page:
+            execute_current_page_moves()
+            del st.session_state.execute_current_page
+        
         # 统计信息（基于所有文件夹）
         total_archives = sum(len(data['archives']) for data in scan_results.values())
         move_count = sum(1 for plans in st.session_state.move_plan.values() for plan in plans.values() if plan is not None)
         
         st.info(f"总压缩包数量: {total_archives} | 计划移动: {move_count}")
-        
-        # 确认执行
-        col1, col2 = st.columns(2)
-        with col1:
-            execute_all = st.button("确认执行移动", type="primary", help="移动所有页面的文件")
-        with col2:
-            execute_current_page = st.button("只对本页执行移动", help="只移动当前页面的文件")
         
         # 分页导航（底部）
         if total_pages > 1:
