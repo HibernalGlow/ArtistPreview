@@ -463,10 +463,12 @@ def render_main_interface(scan_button, root_path, regex_patterns, show_full_name
         if 'execute_all' in st.session_state and st.session_state.execute_all:
             execute_all_moves()
             del st.session_state.execute_all
+            st.rerun()  # 强制刷新页面以显示更新结果
 
         if 'execute_current_page' in st.session_state and st.session_state.execute_current_page:
             execute_current_page_moves()
             del st.session_state.execute_current_page
+            st.rerun()  # 强制刷新页面以显示更新结果
 
         # 统计信息（基于所有文件夹）
         total_archives = sum(len(data['archives']) for data in scan_results.values())
