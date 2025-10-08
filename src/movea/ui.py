@@ -12,32 +12,51 @@ def render_sidebar():
         st.header("配置")
 
         # 执行操作
-        st.subheader("执行操作")
-        if 'scan_results' in st.session_state:
+        st.subheader("⚡ 执行操作")
+
+        # 检查是否有扫描结果
+        has_scan_results = 'scan_results' in st.session_state and st.session_state.scan_results
+
+        if has_scan_results:
+            scan_results = st.session_state.scan_results
+            total_moves = sum(len(data.get('archives', [])) for data in scan_results.values())
+
+            # 显示统计信息
+            st.info(f"📊 发现 {len(scan_results)} 个文件夹，共 {total_moves} 个待移动文件")
+
+            # 执行按钮区域
+            st.markdown("---")
+
             # 初始化确认状态
             if 'confirm_all' not in st.session_state:
                 st.session_state.confirm_all = False
 
-            if not st.session_state.confirm_all:
-                if st.button("确认执行移动", type="primary", help="移动所有页面的文件"):
-                    st.session_state.confirm_all = True
-                    st.rerun()
-            else:
-                st.warning("⚠️ 确定要移动所有文件吗？这将影响所有页面！")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("✅ 确认执行", type="primary"):
+            # 主要执行按钮
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if not st.session_state.confirm_all:
+                    if st.button("🚀 确认执行移动", type="primary", help="移动所有页面的文件", use_container_width=True):
+                        st.session_state.confirm_all = True
+                        st.rerun()
+                else:
+                    st.warning("⚠️ 确定要移动所有文件吗？这将影响所有页面！")
+                    if st.button("✅ 确认执行", type="primary", use_container_width=True):
                         st.session_state.execute_all = True
                         st.session_state.confirm_all = False
                         st.rerun()
-                with col2:
-                    if st.button("❌ 取消"):
+                    if st.button("❌ 取消", use_container_width=True):
                         st.session_state.confirm_all = False
                         st.rerun()
 
-            if st.button("只对本页执行移动", help="只移动当前页面的文件"):
-                st.session_state.execute_current_page = True
-                st.rerun()
+            with col2:
+                if st.button("📄 只对本页执行移动", help="只移动当前页面的文件", use_container_width=True):
+                    st.session_state.execute_current_page = True
+                    st.rerun()
+
+            st.markdown("---")
+        else:
+            st.info("💡 请先点击「扫描目录」按钮开始分析文件")
 
         # 用户输入根路径
         root_path = st.text_input("输入根路径:", value=r"E:\1Hub\EH\1EHV", placeholder="例如: D:\\Manga\\Artists")
@@ -148,6 +167,10 @@ def render_sidebar():
 
 def render_main_interface(scan_button, root_path, regex_patterns, show_full_names, items_per_page):
     """渲染主界面"""
+    # 初始化session_state
+    if 'move_plan' not in st.session_state:
+        st.session_state.move_plan = {}
+
     # 主界面
     if scan_button:
         if not root_path:
@@ -212,23 +235,38 @@ def render_main_interface(scan_button, root_path, regex_patterns, show_full_name
             data = scan_results[level1_name]
 
             # 创建标题行：文件夹名 + 按钮组
-            col_title, col_open, col_blacklist, col_execute = st.columns([0.45, 0.15, 0.15, 0.25])
+            col_title, col_open, col_blacklist, col_execute = st.columns([0.4, 0.18, 0.18, 0.24])
+
             with col_title:
+                # 显示文件夹信息
+                archive_count = len(data.get('archives', []))
+                folder_count = len(data.get('folders', []))
                 st.subheader(f"📁 {level1_name}")
+                st.caption(f"📦 {archive_count} 个压缩包 • 📂 {folder_count} 个文件夹")
+
             with col_open:
-                if st.button(f"打开", key=f"open_{level1_name}", help=f"在文件管理器中打开 {level1_name} 文件夹"):
+                if st.button("🔍 打开", key=f"open_{level1_name}", help=f"在文件管理器中打开 {level1_name} 文件夹", use_container_width=True):
                     try:
                         os.startfile(data['path'])  # Windows系统打开文件夹
                         st.success(f"已打开文件夹: {level1_name}")
                     except Exception as e:
                         st.error(f"无法打开文件夹: {e}")
+
             with col_blacklist:
-                if st.button(f"黑名单", key=f"blacklist_{level1_name}", help=f"将 {level1_name} 添加到黑名单"):
+                if st.button("🚫 黑名单", key=f"blacklist_{level1_name}", help=f"将 {level1_name} 添加到黑名单", use_container_width=True):
                     add_to_blacklist(level1_name)
+
             with col_execute:
-                if st.button(f"执行移动", key=f"execute_{level1_name}", help=f"只移动 {level1_name} 文件夹下的文件"):
+                # 检查是否有移动计划
+                level1_move_plan = st.session_state.move_plan.get(level1_name, {})
+                has_moves = bool(level1_move_plan)
+
+                button_text = "⚡ 执行移动" if has_moves else "📋 无移动计划"
+                button_help = f"移动 {level1_name} 文件夹下的文件" if has_moves else "此文件夹没有待移动的文件"
+
+                if st.button(button_text, key=f"execute_{level1_name}", help=button_help,
+                           disabled=not has_moves, use_container_width=True):
                     # 执行单个文件夹的移动
-                    level1_move_plan = st.session_state.move_plan.get(level1_name, {})
                     execute_single_folder(level1_name, data, level1_move_plan)
                     # 重新扫描目录以更新显示
                     st.session_state.scan_results = scan_directory(st.session_state.root_path)

@@ -1,6 +1,20 @@
 """压缩包分类移动工具主入口"""
 import streamlit as st
-from .ui import render_sidebar, render_main_interface
+import sys
+import os
+
+# 处理相对导入问题
+if __name__ == "__main__":
+    # 如果是直接运行此文件，添加父目录到路径
+    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
+
+    # 导入模块
+    from movea.ui import render_sidebar, render_main_interface
+else:
+    # 如果是作为模块导入，使用相对导入
+    from .ui import render_sidebar, render_main_interface
 
 def main():
     """主函数"""
