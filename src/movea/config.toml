@@ -2,15 +2,15 @@
 priority_keywords = [
     "同人志",
 ]
-# 是否允许移动到无编号的二级文件夹
 allow_move_to_unnumbered = false
 
 [blacklist]
 folders = [
-    "[ALICESOFT]",
-    "[こわれもの (抹茶さま、mattya604)]",
-    "[ザンクロー]",
     "[JTveemo]",
+    "[こわれもの (抹茶さま、mattya604)]",
+    "[ALICESOFT]",
+    "[影おじ (隠れエリア)]",
+    "[ザンクロー]",
 ]
 
 [folder_templates]
@@ -20,9 +20,7 @@ templates = [
 ]
 
 [folder_moving]
-# 文件夹移动功能设置
 enabled = true
-# 文件夹黑名单（这些文件夹不会被移动）
 blacklist = [
     "视频",
     "动图",

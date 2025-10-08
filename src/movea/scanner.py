@@ -45,11 +45,16 @@ def scan_directory(root_path):
                         subfolders.remove(folder)  # 从二级文件夹中移除
 
                 if (archives or movable_folders) and subfolders:  # 有可移动对象且有目标文件夹
+                    # 检查是否有"同人志"文件夹
+                    has_doujinshi = any("同人志" in folder for folder in subfolders)
+                    warning_message = None if has_doujinshi else "⚠️ 此文件夹没有'同人志'二级文件夹"
+
                     results[item] = {
                         'path': level1_path,
                         'subfolders': sorted(subfolders),  # 排序二级文件夹
                         'archives': archives,
-                        'movable_folders': movable_folders
+                        'movable_folders': movable_folders,
+                        'warning': warning_message
                     }
     except Exception as e:
         st.error(f"扫描目录时出错: {e}")

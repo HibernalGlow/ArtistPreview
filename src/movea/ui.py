@@ -240,9 +240,13 @@ def render_main_interface(scan_button, root_path, regex_patterns, show_full_name
             with col_title:
                 # 显示文件夹信息
                 archive_count = len(data.get('archives', []))
-                folder_count = len(data.get('folders', []))
+                folder_count = len(data.get('movable_folders', []))
                 st.subheader(f"📁 {level1_name}")
                 st.caption(f"📦 {archive_count} 个压缩包 • 📂 {folder_count} 个文件夹")
+
+                # 显示警告信息（如果有）
+                if data.get('warning'):
+                    st.warning(data['warning'])
 
             with col_open:
                 if st.button("🔍 打开", key=f"open_{level1_name}", help=f"在文件管理器中打开 {level1_name} 文件夹", use_container_width=True):
