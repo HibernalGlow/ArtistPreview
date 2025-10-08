@@ -14,30 +14,42 @@ import tomli_w
 # 支持的压缩包扩展名
 ARCHIVE_EXTENSIONS = {'.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz'}
 
-# 黑名单文件路径
-BLACKLIST_FILE = Path(__file__).parent / "blacklist.toml"
+# 配置文件路径
+CONFIG_FILE = Path(__file__).parent / "config.toml"
+
+def load_config():
+    """加载配置文件"""
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, 'rb') as f:
+                return tomllib.load(f)
+        except Exception as e:
+            st.error(f"加载配置文件失败: {e}")
+    return {
+        'matching': {'priority_keywords': []},
+        'blacklist': {'folders': []}
+    }
+
+def save_config(config):
+    """保存配置文件"""
+    try:
+        with open(CONFIG_FILE, 'wb') as f:
+            tomli_w.dump(config, f)
+        return True
+    except Exception as e:
+        st.error(f"保存配置文件失败: {e}")
+        return False
 
 def load_blacklist():
     """加载黑名单"""
-    if BLACKLIST_FILE.exists():
-        try:
-            with open(BLACKLIST_FILE, 'rb') as f:
-                data = tomllib.load(f)
-                return set(data.get('blacklist', []))
-        except Exception as e:
-            st.error(f"加载黑名单失败: {e}")
-    return set()
+    config = load_config()
+    return set(config.get('blacklist', {}).get('folders', []))
 
 def save_blacklist(blacklist):
     """保存黑名单"""
-    try:
-        data = {'blacklist': list(blacklist)}
-        with open(BLACKLIST_FILE, 'wb') as f:
-            tomli_w.dump(data, f)
-        return True
-    except Exception as e:
-        st.error(f"保存黑名单失败: {e}")
-        return False
+    config = load_config()
+    config['blacklist'] = {'folders': list(blacklist)}
+    return save_config(config)
 
 def add_to_blacklist(folder_name):
     """添加文件夹到黑名单"""
@@ -246,17 +258,37 @@ def scan_directory(root_path):
     return results
 
 def match_archive_to_folder(archive_name, subfolders, regex_patterns):
-    """使用正则匹配压缩包到二级文件夹"""
-    matches = []
+    """使用正则匹配压缩包到二级文件夹，优先选择包含关键词的文件夹"""
+    config = load_config()
+    priority_keywords = config.get('matching', {}).get('priority_keywords', [])
+    
+    # 先找到所有正则匹配的文件夹
+    matched_folders = []
     for folder in subfolders:
         for pattern in regex_patterns:
             try:
                 if re.search(pattern, archive_name, re.IGNORECASE):
-                    matches.append(folder)
+                    matched_folders.append(folder)
                     break  # 找到匹配就停止
             except re.error:
                 continue  # 忽略无效的正则表达式
-    return matches
+    
+    if not matched_folders:
+        return []
+    
+    # 在匹配的文件夹中，优先选择包含关键词的文件夹
+    priority_folders = []
+    regular_folders = []
+    
+    for folder in matched_folders:
+        is_priority = any(keyword.lower() in folder.lower() for keyword in priority_keywords)
+        if is_priority:
+            priority_folders.append(folder)
+        else:
+            regular_folders.append(folder)
+    
+    # 返回优先文件夹 + 普通文件夹
+    return priority_folders + regular_folders
 
 def main():
     st.title("压缩包分类移动工具")
@@ -335,6 +367,17 @@ def main():
                             st.rerun()  # 重新运行以更新显示
         else:
             st.write("黑名单为空")
+        
+        # 显示匹配关键词配置
+        st.subheader("匹配关键词配置")
+        config = load_config()
+        priority_keywords = config.get('matching', {}).get('priority_keywords', [])
+        if priority_keywords:
+            st.write("当前优先关键词:")
+            for keyword in priority_keywords:
+                st.write(f"• {keyword}")
+        else:
+            st.write("未配置优先关键词")
     # 主界面
     if scan_button:
         if not root_path:
@@ -427,8 +470,8 @@ def main():
                 # 匹配建议的文件夹
                 matched_folders = match_archive_to_folder(archive, data['subfolders'], regex_patterns)
                 
-                # 默认选择：排序后的第一个匹配文件夹
-                default_folder = sorted(matched_folders)[0] if matched_folders else (data['subfolders'][0] if data['subfolders'] else None)
+                # 默认选择：优先选择包含关键词的文件夹
+                default_folder = matched_folders[0] if matched_folders else (data['subfolders'][0] if data['subfolders'] else None)
                 
                 # 如果全选跳过，则默认不移动
                 move_default = bool(default_folder) and not skip_all

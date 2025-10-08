@@ -1,0 +1,10 @@
+[matching]
+# 优先匹配的关键词，如果文件夹名包含这些关键词，则优先选择
+priority_keywords = ["同人志"]
+
+[blacklist]
+# 黑名单文件夹名
+folders = [
+    "[ALICESOFT]",
+    "[JTveemo]",
+]
