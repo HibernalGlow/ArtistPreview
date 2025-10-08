@@ -18,3 +18,12 @@ templates = [
     "1. 同人志",
     "2. 商业志",
 ]
+
+[folder_moving]
+# 文件夹移动功能设置
+enabled = true
+# 文件夹黑名单（这些文件夹不会被移动）
+blacklist = [
+    "视频",
+    "动图",
+]

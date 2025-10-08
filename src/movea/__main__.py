@@ -496,6 +496,14 @@ def main():
         # 保存设置到session_state
         st.session_state.allow_move_to_unnumbered = allow_move_to_unnumbered
         
+        enable_folder_moving = st.checkbox(
+            "启用文件夹移动功能",
+            value=config.get('folder_moving', {}).get('enabled', True),
+            help="允许移动文件夹，而不仅仅是压缩包文件"
+        )
+        # 保存设置到session_state
+        st.session_state.enable_folder_moving = enable_folder_moving
+        
         # 黑名单管理
         st.subheader("黑名单管理")
         blacklist = load_blacklist()
@@ -513,6 +521,42 @@ def main():
                             st.rerun()  # 重新运行以更新显示
         else:
             st.write("黑名单为空")
+        
+        # 文件夹黑名单管理
+        st.subheader("文件夹黑名单管理")
+        config = load_config()
+        folder_blacklist = config.get('folder_moving', {}).get('blacklist', [])
+        if folder_blacklist:
+            st.write("当前文件夹黑名单:")
+            for item in sorted(folder_blacklist):
+                col1, col2 = st.columns([0.8, 0.2])
+                with col1:
+                    st.write(f"• {item}")
+                with col2:
+                    if st.button(f"移除", key=f"remove_folder_{item}", help=f"从文件夹黑名单中移除 {item}"):
+                        folder_blacklist.remove(item)
+                        config['folder_moving']['blacklist'] = folder_blacklist
+                        if save_config(config):
+                            st.success(f"已从文件夹黑名单移除 '{item}'")
+                            st.rerun()  # 重新运行以更新显示
+        else:
+            st.write("文件夹黑名单为空")
+        
+        # 添加到文件夹黑名单
+        new_folder_blacklist_item = st.text_input("添加文件夹到黑名单", key="new_folder_blacklist", 
+                                                placeholder="输入文件夹名称")
+        if st.button("添加到文件夹黑名单", key="add_folder_blacklist"):
+            if new_folder_blacklist_item.strip():
+                if new_folder_blacklist_item not in folder_blacklist:
+                    folder_blacklist.append(new_folder_blacklist_item.strip())
+                    config['folder_moving']['blacklist'] = folder_blacklist
+                    if save_config(config):
+                        st.success(f"已添加 '{new_folder_blacklist_item}' 到文件夹黑名单")
+                        st.rerun()
+                else:
+                    st.warning(f"'{new_folder_blacklist_item}' 已在文件夹黑名单中")
+            else:
+                st.warning("请输入有效的文件夹名称")
         
         # 显示匹配关键词配置
         st.subheader("匹配关键词配置")
@@ -701,11 +745,20 @@ def main():
             
             move_plan[level1_name] = level1_move_plan
             
-            # 处理可移动的文件夹
-            if 'movable_folders' in data and data['movable_folders']:
+            # 处理可移动的文件夹（只有启用文件夹移动功能时才显示）
+            if (st.session_state.get('enable_folder_moving', True) and 
+                'movable_folders' in data and data['movable_folders']):
                 st.subheader(f"📁 可移动的文件夹 ({len(data['movable_folders'])} 个)")
                 
                 for folder in data['movable_folders']:
+                    # 检查文件夹是否在黑名单中
+                    config = load_config()
+                    folder_blacklist = config.get('folder_moving', {}).get('blacklist', [])
+                    if folder in folder_blacklist:
+                        st.write(f"**📁 {folder}** (在文件夹黑名单中，跳过)")
+                        level1_move_plan[f"folder_{folder}"] = None
+                        continue
+                    
                     # 为文件夹匹配目标文件夹（使用文件夹名作为匹配依据）
                     matched_folders = match_archive_to_folder(folder, data['subfolders'], regex_patterns, 
                                                        st.session_state.get('allow_move_to_unnumbered', False))
